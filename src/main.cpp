@@ -51,6 +51,7 @@
 #define WIFI_CONNECT_TIMEOUT   20000 // 20 seconds
 #define WIFI_AP_TIMEOUT        300   // 5 minutes in AP mode before sleep
 #define MAX_IMAGE_SIZE         200000
+#define LOG_BUFFER_SIZE        4096  // Max log buffer to send to server
 
 // ─────────────────────────── Timing (aligned with TRMNL firmware) ────────
 #define BUTTON_HOLD_TIME       5000  // 5s hold = WiFi credentials clear
@@ -75,11 +76,6 @@
 // Display refresh
 #define FULL_REFRESH_INTERVAL  30    // Full quality refresh every N wakes
 
-// NTP
-#define NTP_SERVER_1           "pool.ntp.org"
-#define NTP_SERVER_2           "time.google.com"
-#define NTP_SYNC_INTERVAL      86400 // Re-sync every 24 hours
-
 // ─────────────────────────── NVS Keys ───────────────────────────
 #define NVS_NAMESPACE          "trmnl"
 #define KEY_WIFI_SSID          "wifi_ssid"
@@ -91,7 +87,6 @@
 #define KEY_WIFI_RETRY_COUNT   "wifi_retry"
 #define KEY_API_RETRY_COUNT    "retry_count"
 #define KEY_LAST_FILENAME      "last_file"
-#define KEY_LAST_NTP_SYNC      "last_sync"
 
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
@@ -106,6 +101,21 @@ String apiKey;
 String apiBaseUrl;
 String friendlyId;
 int refreshRate = DEFAULT_REFRESH_RATE;
+
+// ─────────────────────────── Log Buffer ───────────────────────────
+String logBuffer;
+
+void deviceLog(const char* fmt, ...) {
+  char buf[256];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  Serial.print(buf);
+  if (logBuffer.length() < LOG_BUFFER_SIZE) {
+    logBuffer += buf;
+  }
+}
 
 // Exported constants for captive_portal.cpp
 const char* FW_VERSION_STR = FW_VERSION;
@@ -129,10 +139,10 @@ void goToDeepSleepButtonOnly();
 void showSetupScreen(const String& message);
 void showErrorScreen(const String& message);
 void showLoadingScreen();
-bool syncClock();
 bool performOTA(const char* firmwareUrl);
 void wifiErrorSleep();
 void apiErrorSleep();
+void sendLogs();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SETUP — Main algorithm (runs on every wake)
@@ -140,6 +150,7 @@ void apiErrorSleep();
 void setup() {
   Serial.begin(115200);
   bootCount++;
+  logBuffer.reserve(LOG_BUFFER_SIZE);
 
   // ── Determine wake reason ──
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -148,7 +159,7 @@ void setup() {
                    wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED);
   bool timerWake = (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER);
 
-  Serial.printf("[Boot #%d] Wake: %s\n", bootCount,
+  deviceLog("[Boot #%d] Wake: %s\n", bootCount,
                 userWake ? "USER" : (timerWake ? "TIMER" : "OTHER"));
 
   // ── Initialize M5Paper ──
@@ -165,7 +176,7 @@ void setup() {
   // ── Check reset button (before display init) ──
   // Aligned with TRMNL: 5s hold = WiFi clear, 15s = factory reset
   if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
-    Serial.println("Button held at boot...");
+    deviceLog("Button held at boot...\n");
     unsigned long pressStart = millis();
     while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
       unsigned long held = millis() - pressStart;
@@ -177,7 +188,7 @@ void setup() {
     unsigned long holdTime = millis() - pressStart;
 
     if (holdTime >= BUTTON_FACTORY_RESET) {
-      Serial.println("Factory reset (15s hold)");
+      deviceLog("Factory reset (15s hold)\n");
       M5.Display.setRotation(1);
       M5.Display.setEpdMode(epd_mode_t::epd_quality);
       canvas.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
@@ -189,7 +200,7 @@ void setup() {
       ESP.restart();
       return;
     } else if (holdTime >= BUTTON_HOLD_TIME) {
-      Serial.println("WiFi credentials clear (5s hold)");
+      deviceLog("WiFi credentials clear (5s hold)\n");
       prefs.begin(NVS_NAMESPACE, false);
       prefs.remove(KEY_WIFI_SSID);
       prefs.remove(KEY_WIFI_PASS);
@@ -217,11 +228,11 @@ void setup() {
 
   // ── Load settings from NVS ──
   loadSettings();
-  Serial.printf("API URL: %s, Refresh: %ds\n", apiBaseUrl.c_str(), refreshRate);
+  deviceLog("Refresh: %ds\n", refreshRate);
 
   // ── Check if WiFi is configured ──
   if (configuredSSID.length() == 0) {
-    Serial.println("No WiFi configured - starting captive portal");
+    deviceLog("No WiFi configured - starting captive portal\n");
     showSetupScreen("Connect to WiFi:\nM5Paper-TRMNL\nThen open: 192.168.4.1");
     startCaptivePortal();
     return;
@@ -239,9 +250,6 @@ void setup() {
   prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
   prefs.end();
 
-  // ── Clock synchronization ──
-  syncClock();
-
   // ── Check if API key and friendly ID exist ──
   if (apiKey.length() == 0) {
     registerDevice();
@@ -251,7 +259,6 @@ void setup() {
 
   // ── Ping server (fetch display) ──
   float batteryVoltage = getBatteryVoltage();
-  Serial.printf("Battery: %.2f V\n", batteryVoltage);
   fetchAndDisplay(batteryVoltage);
 }
 
@@ -310,7 +317,7 @@ void clearAllSettings() {
 //  WIFI CONNECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 bool connectWiFi() {
-  Serial.printf("Connecting to WiFi: %s\n", configuredSSID.c_str());
+  deviceLog("WiFi: %s\n", configuredSSID.c_str());
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
@@ -318,16 +325,15 @@ bool connectWiFi() {
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - start > WIFI_CONNECT_TIMEOUT) {
-      Serial.println("WiFi connection timeout");
+      deviceLog("WiFi connection timeout\n");
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
       return false;
     }
     delay(250);
-    Serial.print(".");
   }
 
-  Serial.printf("\nConnected! IP: %s, RSSI: %d\n",
+  deviceLog("OK IP:%s RSSI:%d\n",
                 WiFi.localIP().toString().c_str(), WiFi.RSSI());
   return true;
 }
@@ -346,13 +352,13 @@ void wifiErrorSleep() {
       // Max retries exceeded — sleep until button press only
       prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
       prefs.end();
-      Serial.println("WiFi max retries — button-only sleep");
+      deviceLog("WiFi max retries — button-only sleep\n");
       showErrorScreen("WiFi unreachable\n" + configuredSSID + "\n\nPress button to retry\nHold 5s to reconfigure");
       goToDeepSleepButtonOnly();
       return;
   }
 
-  Serial.printf("WiFi retry #%d, sleeping %ds\n", retryCount, sleepTime);
+  deviceLog("WiFi retry #%d, sleeping %ds\n", retryCount, sleepTime);
   prefs.putInt(KEY_WIFI_RETRY_COUNT, retryCount + 1);
   prefs.end();
 
@@ -373,12 +379,12 @@ void apiErrorSleep() {
       // Max retries — fall back to normal refresh rate
       prefs.putInt(KEY_API_RETRY_COUNT, 1);
       prefs.end();
-      Serial.println("API max retries — sleeping normal rate");
+      deviceLog("API max retries — sleeping normal rate\n");
       goToDeepSleep(refreshRate);
       return;
   }
 
-  Serial.printf("API retry #%d, sleeping %ds\n", retryCount, sleepTime);
+  deviceLog("API retry #%d, sleeping %ds\n", retryCount, sleepTime);
   prefs.putInt(KEY_API_RETRY_COUNT, retryCount + 1);
   prefs.end();
 
@@ -386,46 +392,62 @@ void apiErrorSleep() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  CLOCK SYNCHRONIZATION
+//  LOG SUBMISSION (POST /api/log)
 // ═══════════════════════════════════════════════════════════════════════════════
-bool syncClock() {
-  prefs.begin(NVS_NAMESPACE, true);
-  uint32_t lastSync = prefs.getUInt(KEY_LAST_NTP_SYNC, 0);
-  prefs.end();
+void sendLogs() {
+  Serial.printf("[Log] sendLogs called: bufLen=%d baseUrl='%s' wifi=%d\n",
+    logBuffer.length(), apiBaseUrl.c_str(), WiFi.status());
 
-  // Skip sync if done within last 24 hours
-  time_t now;
-  time(&now);
-  if (lastSync != 0 && now > 1000000000 && ((uint32_t)now - lastSync) < NTP_SYNC_INTERVAL) {
-    Serial.println("NTP: skipping (synced recently)");
-    return true;
+  if (logBuffer.length() == 0) { Serial.println("[Log] SKIP: buffer empty"); return; }
+
+  // Only send to non-official servers (local TRMNL)
+  if (apiBaseUrl == DEFAULT_API_BASE_URL) { Serial.println("[Log] SKIP: official server"); return; }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Log] SKIP: WiFi not connected, discarding");
+    logBuffer = "";
+    return;
   }
 
-  Serial.println("NTP: syncing...");
-  configTime(0, 0, NTP_SERVER_1, NTP_SERVER_2);
+  HTTPClient http;
+  String url = apiBaseUrl + "/api/log";
+  http.begin(url);
+  http.setTimeout(5000);
+  if (apiKey.length() > 0) {
+    http.addHeader("Access-Token", apiKey);
+  }
+  http.addHeader("ID", WiFi.macAddress());
+  http.addHeader("Content-Type", "application/json");
 
-  struct tm timeinfo;
-  if (getLocalTime(&timeinfo, 10000)) {
-    Serial.printf("NTP: %04d-%02d-%02d %02d:%02d:%02d UTC\n",
-                  timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                  timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
-
-    time(&now);
-    prefs.begin(NVS_NAMESPACE, false);
-    prefs.putUInt(KEY_LAST_NTP_SYNC, (uint32_t)now);
-    prefs.end();
-    return true;
+  // Server expects: {"level": "info", "message": "..."}
+  // Truncate to 5000 chars max as required by server
+  String msg = logBuffer;
+  if (msg.length() > 5000) {
+    msg = msg.substring(0, 5000);
   }
 
-  Serial.println("NTP: sync failed");
-  return false;
+  JsonDocument doc;
+  doc["level"] = "info";
+  doc["message"] = msg;
+
+  String payload;
+  serializeJson(doc, payload);
+
+  Serial.printf("[Log] POST %s (%d bytes payload)\n", url.c_str(), payload.length());
+
+  int code = http.POST(payload);
+  String response = http.getString();
+  Serial.printf("[Log] Response: %d - %s\n", code, response.c_str());
+  http.end();
+
+  logBuffer = "";
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  DEVICE REGISTRATION (/api/setup)
 // ═══════════════════════════════════════════════════════════════════════════════
 void registerDevice() {
-  Serial.println("GET /api/setup...");
+  deviceLog("GET /api/setup...\n");
 
   HTTPClient http;
   String url = apiBaseUrl + "/api/setup";
@@ -439,7 +461,7 @@ void registerDevice() {
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
-    Serial.printf("Setup failed, HTTP %d\n", code);
+    deviceLog("Setup failed, HTTP %d\n", code);
     http.end();
     showErrorScreen("Setup failed\nHTTP " + String(code) + "\n" + apiBaseUrl);
     apiErrorSleep();
@@ -451,7 +473,7 @@ void registerDevice() {
 
   JsonDocument doc;
   if (deserializeJson(doc, payload)) {
-    Serial.println("Setup: JSON parse error");
+    deviceLog("Setup: JSON parse error\n");
     showErrorScreen("Setup: bad response");
     apiErrorSleep();
     return;
@@ -470,15 +492,15 @@ void registerDevice() {
       prefs.putInt(KEY_API_RETRY_COUNT, 1);
       prefs.end();
       friendlyId = fid;
-      Serial.printf("Registered! API Key: %s, Friendly ID: %s\n", key.c_str(), fid.c_str());
+      deviceLog("Registered! API Key: %s, Friendly ID: %s\n", key.c_str(), fid.c_str());
     }
   } else if (status == 404) {
     // MAC not registered on server
-    Serial.println("MAC not registered on server");
+    deviceLog("MAC not registered on server\n");
     showSetupScreen("Register your device\n\nMAC: " + WiFi.macAddress() + "\n\non usetrmnl.com\nor your server dashboard");
     goToDeepSleep(SLEEP_AFTER_SETUP);
   } else {
-    Serial.printf("Setup: unexpected status %d\n", status);
+    deviceLog("Setup: unexpected status %d\n", status);
     showErrorScreen("Setup error\nStatus: " + String(status));
     apiErrorSleep();
   }
@@ -490,7 +512,7 @@ void registerDevice() {
 float getBatteryVoltage() {
   float voltage = M5.Power.getBatteryVoltage() / 1000.0;
   int level = M5.Power.getBatteryLevel();
-  Serial.printf("Battery: %d%%, %.2fV\n", level, voltage);
+  deviceLog("Bat: %d%% %.2fV\n", level, voltage);
   return voltage;
 }
 
@@ -498,7 +520,7 @@ float getBatteryVoltage() {
 //  API COMMUNICATION (/api/display)
 // ═══════════════════════════════════════════════════════════════════════════════
 void fetchAndDisplay(float batteryVoltage) {
-  Serial.println("GET /api/display...");
+  deviceLog("GET /api/display...\n");
 
   HTTPClient http;
   String url = apiBaseUrl + "/api/display";
@@ -522,7 +544,7 @@ void fetchAndDisplay(float batteryVoltage) {
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
-    Serial.printf("API failed, HTTP %d\n", code);
+    deviceLog("API failed, HTTP %d\n", code);
     http.end();
     showErrorScreen("Server error\nHTTP " + String(code));
     apiErrorSleep();
@@ -534,7 +556,7 @@ void fetchAndDisplay(float batteryVoltage) {
 
   JsonDocument doc;
   if (deserializeJson(doc, payload)) {
-    Serial.println("API: JSON parse error");
+    deviceLog("API: JSON parse error\n");
     showErrorScreen("Server: bad response");
     apiErrorSleep();
     return;
@@ -550,7 +572,7 @@ void fetchAndDisplay(float batteryVoltage) {
   // ── Handle reset_firmware ──
   bool resetFirmware = doc["reset_firmware"] | false;
   if (resetFirmware) {
-    Serial.println("Server requested device reset");
+    deviceLog("Server requested device reset\n");
     clearAllSettings();
     ESP.restart();
     return;
@@ -559,7 +581,7 @@ void fetchAndDisplay(float batteryVoltage) {
   // ── Handle status codes ──
   if (status == 202) {
     // Device not yet linked to a user / plugin not attached
-    Serial.println("Status 202: plugin not attached");
+    deviceLog("Status 202: plugin not attached\n");
     showSetupScreen("Waiting for setup\n\nID: " + friendlyId + "\nMAC: " + WiFi.macAddress());
     saveRefreshRate(SLEEP_NOT_CONNECTED);
     goToDeepSleep(SLEEP_NOT_CONNECTED);
@@ -568,14 +590,14 @@ void fetchAndDisplay(float batteryVoltage) {
 
   if (status == 500) {
     // Server says device not found for this token
-    Serial.println("Status 500: device not found, resetting");
+    deviceLog("Status 500: device not found, resetting\n");
     clearAllSettings();
     ESP.restart();
     return;
   }
 
   if (status != 0) {
-    Serial.printf("API: unexpected status %d\n", status);
+    deviceLog("API: unexpected status %d\n", status);
     goToDeepSleep(refreshRate);
     return;
   }
@@ -589,22 +611,22 @@ void fetchAndDisplay(float batteryVoltage) {
 
   // Update refresh rate from server
   if (newRefreshRate != refreshRate) {
-    Serial.printf("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
+    deviceLog("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
     saveRefreshRate(newRefreshRate);
   }
 
   // ── OTA firmware update ──
   if (updateFirmware && firmwareUrl && strlen(firmwareUrl) > 0) {
-    Serial.printf("OTA update: %s\n", firmwareUrl);
+    deviceLog("OTA update: %s\n", firmwareUrl);
     if (performOTA(firmwareUrl)) {
       return;  // OTA success — device will restart
     }
-    Serial.println("OTA failed, continuing...");
+    deviceLog("OTA failed, continuing...\n");
   }
 
   // ── Check if image needs update ──
   if (!imageUrl || strlen(imageUrl) == 0) {
-    Serial.println("No image_url — sleeping");
+    deviceLog("No image_url — sleeping\n");
     goToDeepSleep(refreshRate);
     return;
   }
@@ -615,7 +637,7 @@ void fetchAndDisplay(float batteryVoltage) {
     prefs.begin(NVS_NAMESPACE, false);
     String lastFile = prefs.getString(KEY_LAST_FILENAME, "");
     if (lastFile == String(filename)) {
-      Serial.println("Image unchanged (same filename) — skipping display");
+      deviceLog("Image unchanged (same filename) — skipping display\n");
       needsUpdate = false;
     } else {
       prefs.putString(KEY_LAST_FILENAME, String(filename));
@@ -624,7 +646,6 @@ void fetchAndDisplay(float batteryVoltage) {
   }
 
   if (needsUpdate) {
-    Serial.printf("Image: %s\n", imageUrl);
     displayImage(imageUrl);
   }
 
@@ -635,7 +656,7 @@ void fetchAndDisplay(float batteryVoltage) {
 //  IMAGE DISPLAY
 // ═══════════════════════════════════════════════════════════════════════════════
 void displayImage(const char* imageUrl) {
-  Serial.println("Downloading image...");
+  deviceLog("Downloading...\n");
 
   if (downloadAndDisplayImage(imageUrl)) {
     partialRefreshCount++;
@@ -643,17 +664,17 @@ void displayImage(const char* imageUrl) {
     if (partialRefreshCount >= FULL_REFRESH_INTERVAL) {
       M5.Display.setEpdMode(epd_mode_t::epd_quality);
       partialRefreshCount = 0;
-      Serial.println("Full quality refresh (ghost clear)");
+      deviceLog("Full refresh (ghost clear)\n");
     } else {
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
-      Serial.printf("Fast refresh (%d/%d until full)\n", partialRefreshCount, FULL_REFRESH_INTERVAL);
+      deviceLog("Fastest refresh\n");
+      M5.Display.setEpdMode(epd_mode_t::epd_fastest);
     }
 
     canvas.pushSprite(0, 0);
-    M5.Display.display();
-    Serial.println("Image displayed.");
+    M5.Display.waitDisplay();
+    deviceLog("Display done\n");
   } else {
-    Serial.println("Image display failed!");
+    deviceLog("Image display failed!\n");
   }
 }
 
@@ -665,7 +686,7 @@ bool downloadAndDisplayImage(const char* url) {
 
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("Image download failed, HTTP %d\n", code);
+    deviceLog("Img HTTP %d\n", code);
     http.end();
     return false;
   }
@@ -673,7 +694,7 @@ bool downloadAndDisplayImage(const char* url) {
   int len = http.getSize();
   if (len <= 0) len = MAX_IMAGE_SIZE;
   if (len > MAX_IMAGE_SIZE) {
-    Serial.printf("Image too large: %d\n", len);
+    deviceLog("Image too large: %d\n", len);
     http.end();
     return false;
   }
@@ -683,7 +704,7 @@ bool downloadAndDisplayImage(const char* url) {
     buffer = (uint8_t*)malloc(len);
   }
   if (!buffer) {
-    Serial.println("Memory allocation failed");
+    deviceLog("Memory allocation failed\n");
     http.end();
     return false;
   }
@@ -703,7 +724,7 @@ bool downloadAndDisplayImage(const char* url) {
       }
     } else {
       if (millis() - lastDataTime > 15000) {
-        Serial.println("Download timeout");
+        deviceLog("Download timeout\n");
         break;
       }
       delay(1);
@@ -712,14 +733,10 @@ bool downloadAndDisplayImage(const char* url) {
 
   http.end();
 
-  // Disconnect WiFi early to save power during image rendering
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-
-  Serial.printf("Downloaded: %d bytes\n", bytesRead);
+  deviceLog("Downloaded: %d bytes\n", bytesRead);
 
   if (bytesRead < 100) {
-    Serial.println("Data too small");
+    deviceLog("Data too small\n");
     free(buffer);
     return false;
   }
@@ -729,13 +746,13 @@ bool downloadAndDisplayImage(const char* url) {
   // Detect format by magic bytes
   if (bytesRead >= 4 && buffer[0] == 0x89 && buffer[1] == 0x50 &&
       buffer[2] == 0x4E && buffer[3] == 0x47) {
-    Serial.println("PNG format");
+    deviceLog("PNG format\n");
     success = canvas.drawPng(buffer, bytesRead, 0, 0);
   } else if (bytesRead >= 2 && buffer[0] == 'B' && buffer[1] == 'M') {
-    Serial.println("BMP format");
+    deviceLog("BMP format\n");
     success = canvas.drawBmp(buffer, bytesRead, 0, 0);
   } else {
-    Serial.printf("Unknown format: %02X %02X %02X %02X\n",
+    deviceLog("Unknown format: %02X %02X %02X %02X\n",
                   buffer[0], buffer[1], buffer[2], buffer[3]);
   }
 
@@ -747,7 +764,7 @@ bool downloadAndDisplayImage(const char* url) {
 //  OTA FIRMWARE UPDATE
 // ═══════════════════════════════════════════════════════════════════════════════
 bool performOTA(const char* firmwareUrl) {
-  Serial.println("Starting OTA update...");
+  deviceLog("Starting OTA update...\n");
   showSetupScreen("Firmware Update\n\nDownloading...\nDo not power off");
 
   HTTPClient http;
@@ -757,7 +774,7 @@ bool performOTA(const char* firmwareUrl) {
 
   int code = http.GET();
   if (code != HTTP_CODE_OK) {
-    Serial.printf("OTA download failed, HTTP %d\n", code);
+    deviceLog("OTA download failed, HTTP %d\n", code);
     http.end();
     showErrorScreen("Firmware update failed\nHTTP " + String(code));
     return false;
@@ -765,14 +782,14 @@ bool performOTA(const char* firmwareUrl) {
 
   size_t contentLength = http.getSize();
   if (contentLength <= 0) {
-    Serial.println("OTA: unknown content length");
+    deviceLog("OTA: unknown content length\n");
     http.end();
     showErrorScreen("Firmware update failed\nInvalid size");
     return false;
   }
 
   if (!Update.begin(contentLength)) {
-    Serial.println("OTA: not enough space");
+    deviceLog("OTA: not enough space\n");
     http.end();
     showErrorScreen("Firmware update failed\nNot enough space");
     return false;
@@ -783,19 +800,19 @@ bool performOTA(const char* firmwareUrl) {
   http.end();
 
   if (written != contentLength) {
-    Serial.printf("OTA: wrote %d/%d bytes\n", written, contentLength);
+    deviceLog("OTA: wrote %d/%d bytes\n", written, contentLength);
     Update.abort();
     showErrorScreen("Firmware update failed\nIncomplete download");
     return false;
   }
 
   if (!Update.end(true)) {
-    Serial.println("OTA: finalization failed");
+    deviceLog("OTA: finalization failed\n");
     showErrorScreen("Firmware update failed\nVerification error");
     return false;
   }
 
-  Serial.println("OTA success! Restarting...");
+  deviceLog("OTA success! Restarting...\n");
   showSetupScreen("Firmware Updated!\n\nRestarting...");
   delay(1000);
   ESP.restart();
@@ -883,7 +900,8 @@ void showErrorScreen(const String& message) {
 // GPIO2 must be held HIGH during deep sleep or the device powers off permanently.
 
 void goToDeepSleep(int seconds) {
-  Serial.printf("Sleep: %d seconds\n", seconds);
+  deviceLog("Sleep: %d seconds\n", seconds);
+  sendLogs();
   Serial.flush();
 
   canvas.deleteSprite();
@@ -908,7 +926,8 @@ void goToDeepSleep(int seconds) {
 }
 
 void goToDeepSleepButtonOnly() {
-  Serial.println("Sleep: button-only wake");
+  deviceLog("Sleep: button-only wake\n");
+  sendLogs();
   Serial.flush();
 
   canvas.deleteSprite();
