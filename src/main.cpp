@@ -149,11 +149,21 @@ void sendLogs();
 void showLowBatteryAndShutdown();
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SETUP — One-time hardware init (runs once on power-on or ESP.restart)
+//  SETUP — Main algorithm (runs on every wake from deep sleep)
 // ═══════════════════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
+  bootCount++;
   logBuffer.reserve(LOG_BUFFER_SIZE);
+
+  // ── Determine wake reason ──
+  // After deep sleep with gpio_deep_sleep_hold_en(), ESP32 wakes and
+  // esp_sleep_get_wakeup_cause() returns the actual cause directly.
+  esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
+  const char* wakeStr = "COLD";
+  if (wakeup == ESP_SLEEP_WAKEUP_TIMER) wakeStr = "TIMER";
+  else if (wakeup == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "BUTTON";
+  bool coldBoot = (wakeup == ESP_SLEEP_WAKEUP_UNDEFINED);
 
   // ── Initialize M5Paper ──
   auto cfg = M5.config();
@@ -165,9 +175,13 @@ void setup() {
   cfg.clear_display = false; // We clear right before drawing new image (minimizes white flash)
   M5.begin(cfg);
 
-  // CRITICAL: GPIO2 HIGH for SY7088 boost converter
+  // CRITICAL: Release GPIO hold from deep sleep, then ensure GPIO2 HIGH
+  gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  gpio_deep_sleep_hold_dis();
   pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
   digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
+
+  deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
 
   // ── Display init ──
   M5.Display.setRotation(1);  // landscape 960x540
@@ -179,31 +193,10 @@ void setup() {
 
   canvas.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
   pinMode(M5PAPER_WAKE_BUTTON, INPUT_PULLUP);
-}
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  LOOP — Main cycle (runs after each wake from light sleep)
-// ═══════════════════════════════════════════════════════════════════════════════
-void loop() {
-  bootCount++;
-  logBuffer = "";
-
-  // ── Determine wake reason ──
-  // After light sleep, esp_sleep_get_wakeup_cause() returns the actual cause.
-  // On cold boot, it returns ESP_SLEEP_WAKEUP_UNDEFINED (0).
-  esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
-  const char* wakeStr = "COLD";
-  if (wakeup == ESP_SLEEP_WAKEUP_TIMER) wakeStr = "TIMER";
-  else if (wakeup == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "BUTTON";
-  else if (bootCount > 1) wakeStr = "LOOP";
-  bool buttonWake = (wakeup == ESP_SLEEP_WAKEUP_EXT1);
-  bool coldBoot = (wakeup == ESP_SLEEP_WAKEUP_UNDEFINED);
-
-  deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
-
-  // ── Check reset button (only on cold boot or button wake) ──
+  // ── Check reset button ──
   // Aligned with TRMNL: 5s hold = WiFi clear, 15s = factory reset
-  if ((coldBoot || buttonWake) && digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+  if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
     deviceLog("Button held at boot...\n");
     unsigned long pressStart = millis();
     while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
@@ -278,6 +271,13 @@ void loop() {
   // ── Ping server (fetch display) ──
   float batteryVoltage = getBatteryVoltage();
   fetchAndDisplay(batteryVoltage);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  LOOP (only used during captive portal)
+// ═══════════════════════════════════════════════════════════════════════════════
+void loop() {
+  // Only reached during captive portal operation
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1026,18 +1026,15 @@ void showLowBatteryAndShutdown() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SLEEP (Light Sleep — no restart, no GPIO2 risk)
+//  SLEEP (Deep Sleep with GPIO hold — per cat-in-136 M5Paper power analysis)
 // ═══════════════════════════════════════════════════════════════════════════════
-// M5Paper deep sleep has proven unreliable on battery:
-// - M5.Display.sleep() + deep sleep causes SY7088 latch-off after ~19 cycles
-// - ESP.restart() after light sleep causes GPIO2 float → power cycle → RTC memory lost
-// - gpio_hold_en() before ESP.restart() STILL causes power cycle
+// gpio_deep_sleep_hold_en() holds ALL GPIO pin states through deep sleep:
+// - GPIO2 stays HIGH → SY7088 boost converter stays on → power maintained
+// - SPI bus pins stay stable → IT8951E doesn't see floating lines
+// - Timer and EXT1 wake work because ESP32 stays powered via SY7088
+// - RTC_DATA_ATTR variables (bootCount) persist through deep sleep
 //
-// Solution: Light sleep + return (NO restart at all)
-// - GPIO states maintained in light sleep (CPU paused, digital domain powered)
-// - After wake, function returns → loop() exits → Arduino calls loop() again
-// - No GPIO transitions, no reboot, no power risk
-// - esp_sleep_get_wakeup_cause() available directly after wake
+// Reference: https://cat-in-136.github.io/2022/05/note-m5paper-power-supply-management.html
 
 void goToDeepSleep(int seconds) {
   // Enforce minimum sleep to avoid rapid wake loops
@@ -1058,10 +1055,12 @@ void goToDeepSleep(int seconds) {
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_sleep_enable_ext1_wakeup(1ULL << M5PAPER_WAKE_BUTTON, ESP_EXT1_WAKEUP_ALL_LOW);
 
-  // Light sleep — CPU halts, GPIO2 stays HIGH, display bus stable
-  esp_light_sleep_start();
+  // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
+  // This keeps GPIO2 HIGH (SY7088 on) and SPI bus pins stable (IT8951E safe)
+  gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  gpio_deep_sleep_hold_en();
 
-  // Woke up — just return. Caller returns up to loop(), which repeats.
+  esp_deep_sleep_start();
 }
 
 void goToDeepSleepButtonOnly() {
@@ -1078,6 +1077,9 @@ void goToDeepSleepButtonOnly() {
   // Only button can wake
   esp_sleep_enable_ext1_wakeup(1ULL << M5PAPER_WAKE_BUTTON, ESP_EXT1_WAKEUP_ALL_LOW);
 
-  // Light sleep — returns when button pressed
-  esp_light_sleep_start();
+  // Hold ALL GPIO states through deep sleep
+  gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  gpio_deep_sleep_hold_en();
+
+  esp_deep_sleep_start();
 }
