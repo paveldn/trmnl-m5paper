@@ -75,6 +75,7 @@
 
 // Display refresh
 #define FULL_REFRESH_INTERVAL  30    // Full quality refresh every N wakes
+#define LOW_BATTERY_VOLTAGE    3.4   // Below this voltage, show warning and shut down
 
 // ─────────────────────────── NVS Keys ───────────────────────────
 #define NVS_NAMESPACE          "trmnl"
@@ -143,6 +144,7 @@ bool performOTA(const char* firmwareUrl);
 void wifiErrorSleep();
 void apiErrorSleep();
 void sendLogs();
+void showLowBatteryAndShutdown();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SETUP — Main algorithm (runs on every wake)
@@ -154,13 +156,13 @@ void setup() {
 
   // ── Determine wake reason ──
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-  bool userWake = (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0 ||
-                   wakeup_reason == ESP_SLEEP_WAKEUP_EXT1 ||
-                   wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED);
+  const char* wakeStr = "COLD";
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) wakeStr = "TIMER";
+  else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) wakeStr = "TOUCH";
+  else if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "BUTTON";
   bool timerWake = (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER);
 
-  deviceLog("[Boot #%d] Wake: %s\n", bootCount,
-                userWake ? "USER" : (timerWake ? "TIMER" : "OTHER"));
+  deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
 
   // ── Initialize M5Paper ──
   auto cfg = M5.config();
@@ -221,9 +223,12 @@ void setup() {
   canvas.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
   pinMode(M5PAPER_WAKE_BUTTON, INPUT_PULLUP);
 
-  // ── Display clear on user wake ──
-  if (userWake) {
-    showLoadingScreen();
+  // ── Low battery protection ──
+  float bootVoltage = M5.Power.getBatteryVoltage() / 1000.0;
+  if (bootVoltage > 0.5 && bootVoltage < LOW_BATTERY_VOLTAGE) {
+    deviceLog("LOW BATTERY: %.2fV < %.1fV threshold\n", bootVoltage, LOW_BATTERY_VOLTAGE);
+    showLowBatteryAndShutdown();
+    return;
   }
 
   // ── Load settings from NVS ──
@@ -319,6 +324,7 @@ void clearAllSettings() {
 bool connectWiFi() {
   deviceLog("WiFi: %s\n", configuredSSID.c_str());
 
+  WiFi.persistent(false);  // Don't write credentials to flash on every boot
   WiFi.mode(WIFI_STA);
   WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
 
@@ -894,35 +900,108 @@ void showErrorScreen(const String& message) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  DEEP SLEEP
+//  LOW BATTERY WARNING
 // ═══════════════════════════════════════════════════════════════════════════════
-// M5Paper has no PMIC — GPIO2 drives the SY7088 boost converter.
-// GPIO2 must be held HIGH during deep sleep or the device powers off permanently.
+void showLowBatteryAndShutdown() {
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  canvas.fillSprite(TFT_WHITE);
 
-void goToDeepSleep(int seconds) {
-  deviceLog("Sleep: %d seconds\n", seconds);
-  sendLogs();
+  // Draw battery icon (centered, large) — Material Design style battery_alert
+  int cx = DISPLAY_WIDTH / 2;
+  int cy = DISPLAY_HEIGHT / 2 - 30;
+  int bw = 120;  // battery body width
+  int bh = 200;  // battery body height
+  int cap_w = 50; // top cap width
+  int cap_h = 20; // top cap height
+  int thick = 8;  // outline thickness
+
+  // Battery cap (top nub)
+  canvas.fillRect(cx - cap_w/2, cy - bh/2 - cap_h, cap_w, cap_h, TFT_BLACK);
+
+  // Battery body outline
+  canvas.fillRect(cx - bw/2, cy - bh/2, bw, bh, TFT_BLACK);
+  canvas.fillRect(cx - bw/2 + thick, cy - bh/2 + thick, bw - 2*thick, bh - 2*thick, TFT_WHITE);
+
+  // Exclamation mark inside battery
+  int ex_x = cx;
+  int ex_top = cy - 50;
+  int ex_w = 14;
+  // Vertical bar
+  canvas.fillRect(ex_x - ex_w/2, ex_top, ex_w, 70, TFT_BLACK);
+  // Dot
+  canvas.fillRect(ex_x - ex_w/2, ex_top + 85, ex_w, ex_w, TFT_BLACK);
+
+  // Text below
+  canvas.setTextColor(TFT_BLACK);
+  canvas.setTextDatum(MC_DATUM);
+  canvas.setFont(&fonts::FreeSansBold12pt7b);
+  canvas.drawString("LOW BATTERY", cx, cy + bh/2 + 50);
+
+  canvas.setFont(&fonts::FreeSans9pt7b);
+  float v = M5.Power.getBatteryVoltage() / 1000.0;
+  canvas.drawString(String(v, 2) + "V - Connect USB to charge", cx, cy + bh/2 + 90);
+
+  canvas.pushSprite(0, 0);
+  M5.Display.waitDisplay();
+
+  // Full shutdown — no timer wake, no button wake
+  // Device will only restart when USB power is connected (cold boot)
+  deviceLog("Shutting down (low battery)\n");
   Serial.flush();
-
-  canvas.deleteSprite();
-
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  esp_wifi_stop();
   delay(100);
 
   M5.Display.sleep();
   M5.Display.waitDisplay();
 
-  // Hold GPIO2 HIGH through deep sleep
+  // Kill main power — only USB connection will restart
+  gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
-  digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
+  digitalWrite(M5EPD_MAIN_PWR_PIN, LOW);
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
 
+  // Deep sleep with no wake sources — effectively off
+  esp_deep_sleep_start();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DEEP SLEEP (M5Unified Power API)
+// ═══════════════════════════════════════════════════════════════════════════════
+// Uses M5.Power.timerSleep() which properly:
+// 1. Puts IT8951E display controller to sleep (critical for power savings)
+// 2. Sets RTC countdown timer (belt-and-suspenders with ESP32 timer)
+// 3. Sets ESP32 timer wakeup as primary reliable wake source
+// 4. Pulses GPIO2 (attempts SY7088 power-off, may or may not fully cut power)
+// 5. Falls back to ESP32 deep sleep (reliable, ~10µA + quiescent currents)
+//
+// Button wake: ext1 on GPIO39 (side button, RTC GPIO3)
+
+void goToDeepSleep(int seconds) {
+  // Enforce minimum sleep to avoid rapid wake loops (e.g. button wake near end of cycle)
+  if (seconds < 15) seconds = 15;
+
+  deviceLog("Sleep: %d seconds\n", seconds);
+  sendLogs();
   Serial.flush();
   delay(10);
-  M5.Power.deepSleep((uint64_t)seconds * 1000000ULL, true);
+
+  // Shut down WiFi radio before sleep
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+
+  // Put display controller to sleep (saves ~100mA!)
+  M5.Display.sleep();
+  M5.Display.waitDisplay();
+
+  // Hold GPIO2 HIGH during deep sleep (keeps SY7088 boost enabled for reliable wake)
+  gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  gpio_deep_sleep_hold_en();
+
+  // Configure wake sources
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  esp_sleep_enable_ext1_wakeup(1ULL << M5PAPER_WAKE_BUTTON, ESP_EXT1_WAKEUP_ALL_LOW);
+
+  esp_deep_sleep_start();
 }
 
 void goToDeepSleepButtonOnly() {
@@ -930,27 +1009,21 @@ void goToDeepSleepButtonOnly() {
   sendLogs();
   Serial.flush();
 
-  canvas.deleteSprite();
-
+  // Shut down WiFi radio before sleep
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
-  esp_wifi_stop();
-  delay(100);
+  delay(10);
 
+  // Put display controller to sleep
   M5.Display.sleep();
   M5.Display.waitDisplay();
 
-  // Hold GPIO2 HIGH through deep sleep
-  pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
-  digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
+  // Hold GPIO2 HIGH during deep sleep
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
 
-  // Only button wake — no timer
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)M5PAPER_WAKE_BUTTON, 0);
-
-  Serial.flush();
-  delay(10);
+  // Only button can wake
+  esp_sleep_enable_ext1_wakeup(1ULL << M5PAPER_WAKE_BUTTON, ESP_EXT1_WAKEUP_ALL_LOW);
   esp_deep_sleep_start();
 }
 
