@@ -61,6 +61,9 @@
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int lastRefreshRate = DEFAULT_REFRESH_RATE;
 RTC_DATA_ATTR int bootCount = 0;
+RTC_DATA_ATTR int partialRefreshCount = 0;  // Track partial refreshes for ghost clearing
+
+#define FULL_REFRESH_INTERVAL  30   // Full quality refresh every N wakes to clear ghosting
 
 #define MAX_WIFI_FAILURES    3
 #define MAX_SERVER_FAILURES  3
@@ -136,7 +139,7 @@ void setup() {
   gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
 
   M5.Display.setRotation(1);  // landscape 960x540
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);  // Default fast; quality used periodically
 
   // ── Power optimization: reduce CPU clock ──
   setCpuFrequencyMhz(80);
@@ -504,6 +507,19 @@ void displayImage(const char* imageUrl) {
   Serial.println("Downloading image...");
 
   if (downloadAndDisplayImage(imageUrl)) {
+    partialRefreshCount++;
+
+    if (partialRefreshCount >= FULL_REFRESH_INTERVAL) {
+      // Full quality refresh to clear ghosting
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      partialRefreshCount = 0;
+      Serial.println("Full quality refresh (ghost clear)");
+    } else {
+      // Fast refresh for frequent updates
+      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      Serial.printf("Fast refresh (%d/%d until full)\n", partialRefreshCount, FULL_REFRESH_INTERVAL);
+    }
+
     canvas.pushSprite(0, 0);
     M5.Display.display();
     Serial.println("Image displayed.");
