@@ -1145,6 +1145,13 @@ void goToDeepSleep(int seconds) {
   esp_wifi_stop();
   delay(10);
 
+  // Put IT8951E into STANDBY mode (0x0002) to reduce sleep current
+  // STANDBY draws ~1-2mA vs ~5-10mA idle. Wakes with any host command
+  // (M5.begin() sends SYS_RUN during panel init on next boot)
+  M5.Display.waitDisplay();
+  M5.Display.powerSave(true);
+  delay(10);
+
   // Configure wake sources
   // Button press (GPIO39, active LOW) or timer
   esp_sleep_enable_ext0_wakeup((gpio_num_t)M5PAPER_WAKE_BUTTON, LOW);
@@ -1156,4 +1163,3 @@ void goToDeepSleep(int seconds) {
 
   esp_deep_sleep((uint64_t)seconds * 1000000ULL);
 }
-
