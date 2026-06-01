@@ -20,7 +20,7 @@
  * 
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
  * 
- * @version 2.1.0
+ * @version 2.2.0
  * @see https://docs.trmnl.com/go/diy/byod
  */
 
@@ -41,7 +41,7 @@
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #define DEVICE_MODEL        "m5paper"
-#define FW_VERSION          "2.1.0"
+#define FW_VERSION          "2.2.0"
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
 
@@ -88,10 +88,12 @@
 #define KEY_WIFI_RETRY_COUNT   "wifi_retry"
 #define KEY_API_RETRY_COUNT    "retry_count"
 #define KEY_LAST_FILENAME      "last_file"
-
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR int partialRefreshCount = 0;
+RTC_DATA_ATTR uint8_t savedBSSID[6] = {0};
+RTC_DATA_ATTR uint8_t savedChannel = 0;
+RTC_DATA_ATTR int wifiFailCount = 0;
 
 // ─────────────────────────── Globals ───────────────────────────
 Preferences prefs;
@@ -299,6 +301,7 @@ void saveWiFiSettings(const String& ssid, const String& pass) {
   prefs.end();
   configuredSSID = ssid;
   configuredPass = pass;
+  savedChannel = 0;  // Invalidate fast reconnect cache
 }
 
 void saveServerSettings(const String& key, const String& url) {
@@ -327,6 +330,7 @@ void clearAllSettings() {
   apiBaseUrl = DEFAULT_API_BASE_URL;
   friendlyId = "";
   refreshRate = DEFAULT_REFRESH_RATE;
+  savedChannel = 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -337,12 +341,41 @@ bool connectWiFi() {
 
   WiFi.persistent(false);  // Don't write credentials to flash on every boot
   WiFi.mode(WIFI_STA);
-  WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+
+  // Fast reconnect: use saved channel + BSSID if available
+  bool fastConnect = (savedChannel != 0);
+  if (fastConnect) {
+    deviceLog("Fast reconnect ch:%d\n", savedChannel);
+    WiFi.begin(configuredSSID.c_str(), configuredPass.c_str(), savedChannel, savedBSSID, true);
+  } else {
+    WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+  }
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
-    if (millis() - start > WIFI_CONNECT_TIMEOUT) {
-      deviceLog("WiFi connection timeout\n");
+    if (millis() - start > (fastConnect ? 5000 : WIFI_CONNECT_TIMEOUT)) {
+      if (fastConnect) {
+        // Fast connect failed — invalidate cache and retry with full scan
+        deviceLog("Fast reconnect failed (ch:%d), resetting cache, full scan\n", savedChannel);
+        savedChannel = 0;
+        memset(savedBSSID, 0, 6);
+        WiFi.disconnect(true);
+        delay(10);
+        WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+        fastConnect = false;
+        start = millis();
+        while (WiFi.status() != WL_CONNECTED) {
+          if (millis() - start > WIFI_CONNECT_TIMEOUT) {
+            deviceLog("WiFi FAILED after full scan (timeout %dms)\n", WIFI_CONNECT_TIMEOUT);
+            WiFi.disconnect(true);
+            WiFi.mode(WIFI_OFF);
+            return false;
+          }
+          delay(250);
+        }
+        break;
+      }
+      deviceLog("WiFi FAILED (timeout %dms)\n", WIFI_CONNECT_TIMEOUT);
       WiFi.disconnect(true);
       WiFi.mode(WIFI_OFF);
       return false;
@@ -350,13 +383,27 @@ bool connectWiFi() {
     delay(250);
   }
 
-  deviceLog("OK IP:%s RSSI:%d\n",
-                WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  // Save channel + BSSID for fast reconnect on next wake
+  savedChannel = WiFi.channel();
+  memcpy(savedBSSID, WiFi.BSSID(), 6);
+
+  deviceLog("OK IP:%s RSSI:%d ch:%d %s\n",
+                WiFi.localIP().toString().c_str(), WiFi.RSSI(),
+                savedChannel, fastConnect ? "(fast)" : "(scan)");
+
+  // Report previous WiFi failures to server
+  if (wifiFailCount > 0) {
+    deviceLog("WiFi: recovered after %d failed attempt(s)\n", wifiFailCount);
+    wifiFailCount = 0;
+  }
+
   return true;
 }
 
 // WiFi error sleep with exponential backoff (60s, 180s, 300s then button-only)
 void wifiErrorSleep() {
+  wifiFailCount++;
+
   prefs.begin(NVS_NAMESPACE, false);
   int retryCount = prefs.getInt(KEY_WIFI_RETRY_COUNT, 1);
 
@@ -683,8 +730,8 @@ void displayImage(const char* imageUrl) {
       partialRefreshCount = 0;
       deviceLog("Full refresh (ghost clear)\n");
     } else {
-      deviceLog("Fastest refresh\n");
-      M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+      deviceLog("Fast refresh\n");
+      M5.Display.setEpdMode(epd_mode_t::epd_fast);
     }
 
     // Clear display to initialize IT8951E framebuffer, then immediately push new image
