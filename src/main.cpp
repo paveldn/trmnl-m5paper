@@ -130,6 +130,7 @@ const char* DEFAULT_API_BASE_URL_STR = DEFAULT_API_BASE_URL;
 // ─────────────────────────── Forward Declarations ───────────────────────────
 void loadSettings();
 void saveWiFiSettings(const String& ssid, const String& pass);
+float readBatteryAvg(int samples = 6, int delayMs = 50);
 void saveServerSettings(const String& key, const String& url);
 void clearAllSettings();
 bool connectWiFi();
@@ -229,8 +230,8 @@ void setup() {
     }
   }
 
-  // ── Low battery protection ──
-  float bootVoltage = M5.Power.getBatteryVoltage() / 1000.0;
+  // ── Low battery protection (averaged read to avoid ADC transients) ──
+  float bootVoltage = readBatteryAvg(4, 50);
   bool externalPower = isExternalPowerPresent();
   if (bootVoltage > 0.5 && bootVoltage < LOW_BATTERY_VOLTAGE && !externalPower) {
     deviceLog("LOW BATTERY: %.2fV < %.1fV threshold\n", bootVoltage, LOW_BATTERY_VOLTAGE);
@@ -462,6 +463,13 @@ void sendLogs() {
     return;
   }
 
+  // Check battery before sending logs — avoid network activity on low battery
+  float batV = readBatteryAvg(6, 50);
+  if (batV > 0.5 && batV < LOW_BATTERY_VOLTAGE && !isExternalPowerPresent()) {
+    Serial.println("[Log] SKIP: low battery, deferring logs");
+    return;
+  }
+
   HTTPClient http;
   String url = apiBaseUrl + "/api/log";
   http.begin(url);
@@ -567,6 +575,18 @@ float getBatteryVoltage() {
   int level = M5.Power.getBatteryLevel();
   deviceLog("Bat: %d%% %.2fV\n", level, voltage);
   return voltage;
+}
+
+float readBatteryAvg(int samples, int delayMs) {
+  if (samples <= 0) samples = 1;
+  float sum = 0.0;
+  for (int i = 0; i < samples; ++i) {
+    sum += M5.Power.getBatteryVoltage() / 1000.0;
+    if (i < samples - 1) delay(delayMs);
+  }
+  float avg = sum / samples;
+  deviceLog("Bat(avg): %.2fV samples=%d\n", avg, samples);
+  return avg;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
