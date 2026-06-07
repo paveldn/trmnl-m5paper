@@ -34,6 +34,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <time.h>
 
 #include "captive_portal.h"
 
@@ -133,12 +134,12 @@ void saveServerSettings(const String& key, const String& url);
 void clearAllSettings();
 bool connectWiFi();
 float getBatteryVoltage();
+bool isExternalPowerPresent();
 void fetchAndDisplay(float batteryVoltage);
 void displayImage(const char* imageUrl);
 bool downloadAndDisplayImage(const char* url);
 void registerDevice();
 void goToDeepSleep(int seconds);
-void goToDeepSleepButtonOnly();
 void showSetupScreen(const String& message);
 void showErrorScreen(const String& message);
 void showLoadingScreen();
@@ -180,7 +181,6 @@ void setup() {
   gpio_deep_sleep_hold_dis();
   pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
   digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
-
   deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
 
   // ── Display init ──
@@ -231,10 +231,13 @@ void setup() {
 
   // ── Low battery protection ──
   float bootVoltage = M5.Power.getBatteryVoltage() / 1000.0;
-  if (bootVoltage > 0.5 && bootVoltage < LOW_BATTERY_VOLTAGE) {
+  bool externalPower = isExternalPowerPresent();
+  if (bootVoltage > 0.5 && bootVoltage < LOW_BATTERY_VOLTAGE && !externalPower) {
     deviceLog("LOW BATTERY: %.2fV < %.1fV threshold\n", bootVoltage, LOW_BATTERY_VOLTAGE);
     showLowBatteryAndShutdown();
     return;
+  } else if (bootVoltage > 0.5 && bootVoltage < LOW_BATTERY_VOLTAGE) {
+    deviceLog("LOW BATTERY ignored on external power: %.2fV\n", bootVoltage);
   }
 
   // ── Load settings from NVS ──
@@ -251,7 +254,6 @@ void setup() {
 
   // ── Connect to WiFi (with retry logic) ──
   if (!connectWiFi()) {
-    showErrorScreen("WiFi connection failed\n" + configuredSSID);
     wifiErrorSleep();
     return;
   }
@@ -342,45 +344,44 @@ bool connectWiFi() {
   WiFi.persistent(false);  // Don't write credentials to flash on every boot
   WiFi.mode(WIFI_STA);
 
-  // Fast reconnect: use saved channel + BSSID if available
   bool fastConnect = (savedChannel != 0);
+  bool connected = false;
+
   if (fastConnect) {
     deviceLog("Fast reconnect ch:%d\n", savedChannel);
     WiFi.begin(configuredSSID.c_str(), configuredPass.c_str(), savedChannel, savedBSSID, true);
-  } else {
-    WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start <= 5000) {
+      delay(250);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      connected = true;
+    } else {
+      deviceLog("Fast reconnect failed (ch:%d), resetting cache\n", savedChannel);
+      savedChannel = 0;
+      memset(savedBSSID, 0, 6);
+      WiFi.disconnect(true);
+      delay(10);
+      fastConnect = false;
+    }
   }
 
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED) {
-    if (millis() - start > (fastConnect ? 5000 : WIFI_CONNECT_TIMEOUT)) {
-      if (fastConnect) {
-        // Fast connect failed — invalidate cache and retry with full scan
-        deviceLog("Fast reconnect failed (ch:%d), resetting cache, full scan\n", savedChannel);
-        savedChannel = 0;
-        memset(savedBSSID, 0, 6);
+  if (!connected) {
+    deviceLog("WiFi: full scan connect\n");
+    WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED) {
+      if (millis() - start > WIFI_CONNECT_TIMEOUT) {
+        deviceLog("WiFi FAILED (timeout %dms)\n", WIFI_CONNECT_TIMEOUT);
         WiFi.disconnect(true);
-        delay(10);
-        WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
-        fastConnect = false;
-        start = millis();
-        while (WiFi.status() != WL_CONNECTED) {
-          if (millis() - start > WIFI_CONNECT_TIMEOUT) {
-            deviceLog("WiFi FAILED after full scan (timeout %dms)\n", WIFI_CONNECT_TIMEOUT);
-            WiFi.disconnect(true);
-            WiFi.mode(WIFI_OFF);
-            return false;
-          }
-          delay(250);
-        }
-        break;
+        WiFi.mode(WIFI_OFF);
+        return false;
       }
-      deviceLog("WiFi FAILED (timeout %dms)\n", WIFI_CONNECT_TIMEOUT);
-      WiFi.disconnect(true);
-      WiFi.mode(WIFI_OFF);
-      return false;
+      delay(250);
     }
-    delay(250);
   }
 
   // Save channel + BSSID for fast reconnect on next wake
@@ -400,33 +401,17 @@ bool connectWiFi() {
   return true;
 }
 
-// WiFi error sleep with exponential backoff (60s, 180s, 300s then button-only)
+// WiFi error sleep after failed connection attempts
 void wifiErrorSleep() {
   wifiFailCount++;
 
   prefs.begin(NVS_NAMESPACE, false);
-  int retryCount = prefs.getInt(KEY_WIFI_RETRY_COUNT, 1);
-
-  int sleepTime;
-  switch (retryCount) {
-    case 1: sleepTime = WIFI_RETRY_1; break;
-    case 2: sleepTime = WIFI_RETRY_2; break;
-    case 3: sleepTime = WIFI_RETRY_3; break;
-    default:
-      // Max retries exceeded — sleep until button press only
-      prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
-      prefs.end();
-      deviceLog("WiFi max retries — button-only sleep\n");
-      showErrorScreen("WiFi unreachable\n" + configuredSSID + "\n\nPress button to retry\nHold 5s to reconfigure");
-      goToDeepSleepButtonOnly();
-      return;
-  }
-
-  deviceLog("WiFi retry #%d, sleeping %ds\n", retryCount, sleepTime);
-  prefs.putInt(KEY_WIFI_RETRY_COUNT, retryCount + 1);
+  prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
   prefs.end();
 
-  goToDeepSleep(sleepTime);
+  deviceLog("WiFi unreachable after fast reconnect and full scan - sleeping %ds\n", refreshRate);
+  showErrorScreen("Can't connect to WiFi\n" + configuredSSID + "\n\nRetrying in " + String(refreshRate) + "s");
+  goToDeepSleep(refreshRate);
 }
 
 // API error sleep with exponential backoff (15s, 30s, 60s then normal rate)
@@ -583,6 +568,14 @@ float getBatteryVoltage() {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  API COMMUNICATION (/api/display)
 // ═══════════════════════════════════════════════════════════════════════════════
+bool isExternalPowerPresent() {
+  int16_t vbus = M5.Power.getVBUSVoltage();
+  auto charging = M5.Power.isCharging();
+  bool present = vbus > 4000 || charging == m5::Power_Class::is_charging_t::is_charging;
+  deviceLog("Power: VBUS=%dmV charging=%d external=%d\n", vbus, (int)charging, present ? 1 : 0);
+  return present;
+}
+
 void fetchAndDisplay(float batteryVoltage) {
   deviceLog("GET /api/display...\n");
 
@@ -1052,8 +1045,8 @@ void goToDeepSleep(int seconds) {
   delay(10);
 
   // Configure wake sources
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT1);
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
-  esp_sleep_enable_ext1_wakeup(1ULL << M5PAPER_WAKE_BUTTON, ESP_EXT1_WAKEUP_ALL_LOW);
 
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
   // This keeps GPIO2 HIGH (SY7088 on) and SPI bus pins stable (IT8951E safe)
@@ -1063,23 +1056,3 @@ void goToDeepSleep(int seconds) {
   esp_deep_sleep_start();
 }
 
-void goToDeepSleepButtonOnly() {
-  deviceLog("Sleep: button-only wake\n");
-  sendLogs();
-  Serial.flush();
-
-  // Shut down WiFi radio before sleep
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  esp_wifi_stop();
-  delay(10);
-
-  // Only button can wake
-  esp_sleep_enable_ext1_wakeup(1ULL << M5PAPER_WAKE_BUTTON, ESP_EXT1_WAKEUP_ALL_LOW);
-
-  // Hold ALL GPIO states through deep sleep
-  gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
-  gpio_deep_sleep_hold_en();
-
-  esp_deep_sleep_start();
-}
