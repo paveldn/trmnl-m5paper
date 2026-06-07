@@ -344,7 +344,7 @@ bool connectWiFi() {
   WiFi.persistent(false);  // Don't write credentials to flash on every boot
   WiFi.mode(WIFI_STA);
 
-  bool fastConnect = (savedChannel != 0);
+  bool fastConnect = (savedChannel != 0 && configuredPass.length() > 0);
   bool connected = false;
 
   if (fastConnect) {
@@ -370,7 +370,11 @@ bool connectWiFi() {
 
   if (!connected) {
     deviceLog("WiFi: full scan connect\n");
-    WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+    if (configuredPass.length() > 0) {
+      WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
+    } else {
+      WiFi.begin(configuredSSID.c_str());
+    }
 
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED) {
@@ -1045,14 +1049,14 @@ void goToDeepSleep(int seconds) {
   delay(10);
 
   // Configure wake sources
-  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT1);
-  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
-
+  // Button press (GPIO39, active LOW) or timer
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)M5PAPER_WAKE_BUTTON, LOW);
+ 
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
-  // This keeps GPIO2 HIGH (SY7088 on) and SPI bus pins stable (IT8951E safe)
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
+  delay(300);  // Allow hardware time to settle before deep sleep
 
-  esp_deep_sleep_start();
+  esp_deep_sleep((uint64_t)seconds * 1000000ULL);
 }
 
