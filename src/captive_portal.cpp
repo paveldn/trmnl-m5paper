@@ -201,7 +201,9 @@ static void handleNotFound() {
 
 // ─────────────────────────── Public API ───────────────────────────
 void startCaptivePortal() {
+#ifdef DEBUG_LOGS
   Serial.println("Starting captive portal...");
+#endif
 
   showSetupScreen("Connect to WiFi:\nM5Paper-TRMNL\nThen open: 192.168.4.1");
 
@@ -210,7 +212,9 @@ void startCaptivePortal() {
   WiFi.softAP("M5Paper-TRMNL", "");  // Open network for easy setup
   delay(100);
 
+#ifdef DEBUG_LOGS
   Serial.printf("AP IP: %s\n", WiFi.softAPIP().toString().c_str());
+#endif
 
   // DNS server to redirect all domains to our IP (captive portal)
   dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
@@ -232,7 +236,9 @@ void startCaptivePortal() {
     delay(10);
 
     if (millis() - portalStart > (unsigned long)WIFI_AP_TIMEOUT_VAL * 1000) {
+#ifdef DEBUG_LOGS
       Serial.println("Portal timeout - going to sleep");
+#endif
       webServer.stop();
       WiFi.softAPdisconnect(true);
       goToDeepSleep(DEFAULT_REFRESH_RATE_VAL);

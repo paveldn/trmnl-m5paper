@@ -20,7 +20,7 @@
  * 
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
  * 
- * @version 2.2.0
+ * @version 2.3.0
  * @see https://docs.trmnl.com/go/diy/byod
  */
 
@@ -42,7 +42,7 @@
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #define DEVICE_MODEL        "m5paper"
-#define FW_VERSION          "2.2.0"
+#define FW_VERSION          "2.3.0"
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
 
@@ -89,6 +89,8 @@
 #define KEY_WIFI_RETRY_COUNT   "wifi_retry"
 #define KEY_API_RETRY_COUNT    "retry_count"
 #define KEY_LAST_FILENAME      "last_file"
+#define KEY_IMAGE_ETAG         "image_etag"
+#define KEY_IMAGE_LASTMOD      "image_lastmod"
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR int partialRefreshCount = 0;
@@ -107,7 +109,9 @@ String friendlyId;
 int refreshRate = DEFAULT_REFRESH_RATE;
 
 // ─────────────────────────── Log Buffer ───────────────────────────
+#ifdef DEBUG_LOGS
 String logBuffer;
+#endif
 
 void deviceLog(const char* fmt, ...) {
   char buf[256];
@@ -115,10 +119,21 @@ void deviceLog(const char* fmt, ...) {
   va_start(args, fmt);
   vsnprintf(buf, sizeof(buf), fmt, args);
   va_end(args);
+#ifdef DEBUG_LOGS
   Serial.print(buf);
   if (logBuffer.length() < LOG_BUFFER_SIZE) {
     logBuffer += buf;
   }
+#endif
+}
+
+// WiFi power-save helpers: disable PS during transfers, enable otherwise
+static inline void disableWiFiPS() {
+  esp_wifi_set_ps(WIFI_PS_NONE);
+}
+
+static inline void enableWiFiPS() {
+  esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 }
 
 // Exported constants for captive_portal.cpp
@@ -154,9 +169,11 @@ void showLowBatteryAndShutdown();
 //  SETUP — Main algorithm (runs on every wake from deep sleep)
 // ═══════════════════════════════════════════════════════════════════════════════
 void setup() {
+#ifdef DEBUG_LOGS
   Serial.begin(115200);
-  bootCount++;
   logBuffer.reserve(LOG_BUFFER_SIZE);
+#endif
+  bootCount++;
 
   // ── Determine wake reason ──
   // After deep sleep with gpio_deep_sleep_hold_en(), ESP32 wakes and
@@ -397,6 +414,9 @@ bool connectWiFi() {
                 WiFi.localIP().toString().c_str(), WiFi.RSSI(),
                 savedChannel, fastConnect ? "(fast)" : "(scan)");
 
+  // Enable WiFi power-save mode to reduce idle radio current
+  enableWiFiPS();
+
   // Report previous WiFi failures to server
   if (wifiFailCount > 0) {
     deviceLog("WiFi: recovered after %d failed attempt(s)\n", wifiFailCount);
@@ -449,13 +469,20 @@ void apiErrorSleep() {
 //  LOG SUBMISSION (POST /api/log)
 // ═══════════════════════════════════════════════════════════════════════════════
 void sendLogs() {
+#ifdef DEBUG_LOGS
   Serial.printf("[Log] sendLogs called: bufLen=%d baseUrl='%s' wifi=%d\n",
     logBuffer.length(), apiBaseUrl.c_str(), WiFi.status());
 
-  if (logBuffer.length() == 0) { Serial.println("[Log] SKIP: buffer empty"); return; }
+  if (logBuffer.length() == 0) { 
+    Serial.println("[Log] SKIP: buffer empty");
+    return; 
+  }
 
   // Only send to non-official servers (local TRMNL)
-  if (apiBaseUrl == DEFAULT_API_BASE_URL) { Serial.println("[Log] SKIP: official server"); return; }
+  if (apiBaseUrl == DEFAULT_API_BASE_URL) { 
+    Serial.println("[Log] SKIP: official server");
+    return; 
+  }
 
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[Log] SKIP: WiFi not connected, discarding");
@@ -470,6 +497,7 @@ void sendLogs() {
     return;
   }
 
+  disableWiFiPS();
   HTTPClient http;
   String url = apiBaseUrl + "/api/log";
   http.begin(url);
@@ -501,7 +529,11 @@ void sendLogs() {
   Serial.printf("[Log] Response: %d - %s\n", code, response.c_str());
   http.end();
 
+  // Re-enable power-save after network activity
+  enableWiFiPS();
+
   logBuffer = "";
+#endif
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -509,6 +541,7 @@ void sendLogs() {
 // ═══════════════════════════════════════════════════════════════════════════════
 void registerDevice() {
   deviceLog("GET /api/setup...\n");
+  disableWiFiPS();
 
   HTTPClient http;
   String url = apiBaseUrl + "/api/setup";
@@ -525,12 +558,15 @@ void registerDevice() {
     deviceLog("Setup failed, HTTP %d\n", code);
     http.end();
     showErrorScreen("Setup failed\nHTTP " + String(code) + "\n" + apiBaseUrl);
+    enableWiFiPS();
     apiErrorSleep();
     return;
   }
 
   String payload = http.getString();
   http.end();
+
+  enableWiFiPS();
 
   JsonDocument doc;
   if (deserializeJson(doc, payload)) {
@@ -602,6 +638,7 @@ bool isExternalPowerPresent() {
 
 void fetchAndDisplay(float batteryVoltage) {
   deviceLog("GET /api/display...\n");
+  disableWiFiPS();
 
   HTTPClient http;
   String url = apiBaseUrl + "/api/display";
@@ -628,12 +665,15 @@ void fetchAndDisplay(float batteryVoltage) {
     deviceLog("API failed, HTTP %d\n", code);
     http.end();
     showErrorScreen("Server error\nHTTP " + String(code));
+    enableWiFiPS();
     apiErrorSleep();
     return;
   }
 
   String payload = http.getString();
   http.end();
+
+  enableWiFiPS();
 
   JsonDocument doc;
   if (deserializeJson(doc, payload)) {
@@ -763,12 +803,32 @@ void displayImage(const char* imageUrl) {
 }
 
 bool downloadAndDisplayImage(const char* url) {
+  disableWiFiPS();
+
   HTTPClient http;
   http.begin(url);
+
+  // Send conditional GET if we have a stored ETag/Last-Modified
+  prefs.begin(NVS_NAMESPACE, true);
+  String storedEtag = prefs.getString(KEY_IMAGE_ETAG, "");
+  String storedLast = prefs.getString(KEY_IMAGE_LASTMOD, "");
+  prefs.end();
+  if (storedEtag.length() > 0) {
+    http.addHeader("If-None-Match", storedEtag);
+  }
+  if (storedLast.length() > 0) {
+    http.addHeader("If-Modified-Since", storedLast);
+  }
   http.setTimeout(30000);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
 
   int code = http.GET();
+  if (code == HTTP_CODE_NOT_MODIFIED) {
+    deviceLog("Img HTTP 304 Not Modified\n");
+    http.end();
+    return false;
+  }
+
   if (code != HTTP_CODE_OK) {
     deviceLog("Img HTTP %d\n", code);
     http.end();
@@ -815,10 +875,25 @@ bool downloadAndDisplayImage(const char* url) {
     }
   }
 
+  // Try to capture ETag/Last-Modified for future conditional GETs
+  String respEtag = http.header("ETag");
+  String respLast = http.header("Last-Modified");
   http.end();
+
+  if (respEtag.length() > 0 || respLast.length() > 0) {
+    prefs.begin(NVS_NAMESPACE, false);
+    if (respEtag.length() > 0) prefs.putString(KEY_IMAGE_ETAG, respEtag);
+    if (respLast.length() > 0) prefs.putString(KEY_IMAGE_LASTMOD, respLast);
+    prefs.end();
+  }
 
   deviceLog("Downloaded: %d bytes\n", bytesRead);
 
+  // Disconnect WiFi early so decoding/drawing happens with radio off
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  esp_wifi_stop();
+  delay(10);
   if (bytesRead < 100) {
     deviceLog("Data too small\n");
     free(buffer);
@@ -850,6 +925,7 @@ bool downloadAndDisplayImage(const char* url) {
 bool performOTA(const char* firmwareUrl) {
   deviceLog("Starting OTA update...\n");
   showSetupScreen("Firmware Update\n\nDownloading...\nDo not power off");
+  disableWiFiPS();
 
   HTTPClient http;
   http.begin(firmwareUrl);
@@ -1055,7 +1131,8 @@ void showLowBatteryAndShutdown() {
 
 void goToDeepSleep(int seconds) {
   // Enforce minimum sleep to avoid rapid wake loops
-  if (seconds < 15) seconds = 15;
+  if (seconds < 15) 
+    seconds = 16;
 
   deviceLog("Sleep: %d seconds\n", seconds);
   sendLogs();
@@ -1075,7 +1152,7 @@ void goToDeepSleep(int seconds) {
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
-  delay(300);  // Allow hardware time to settle before deep sleep
+  delay(500);  // Allow hardware time to settle before deep sleep
 
   esp_deep_sleep((uint64_t)seconds * 1000000ULL);
 }
