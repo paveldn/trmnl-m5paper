@@ -1150,7 +1150,7 @@ void goToDeepSleep(int seconds) {
   // (M5.begin() sends SYS_RUN during panel init on next boot)
   M5.Display.waitDisplay();
   M5.Display.powerSave(true);
-  delay(10);
+  delay(100);
 
   // Configure wake sources
   // Button press (GPIO39, active LOW) or timer
@@ -1159,7 +1159,7 @@ void goToDeepSleep(int seconds) {
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
-  delay(500);  // Allow hardware time to settle before deep sleep
+  delay(2000);  // Allow hardware time to settle before deep sleep
 
   esp_deep_sleep((uint64_t)seconds * 1000000ULL);
 }
