@@ -199,7 +199,7 @@ static bool tryInitRtcFromHttpDate(const String &dateHeader, bool force = false)
 // Check for a runtime long-press on the wake button. Only blocks if the
 // button is actually held. 5s = WiFi clear, 15s = factory reset.
 static void checkRuntimeReset() {
-  pinMode(M5PAPER_WAKE_BUTTON, INPUT_PULLUP);
+  pinMode(M5PAPER_WAKE_BUTTON, INPUT);
   if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
     deviceLog("Runtime button press detected\n");
     unsigned long start = millis();
