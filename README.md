@@ -11,6 +11,7 @@ Custom firmware for [M5Paper](https://docs.m5stack.com/en/core/m5paper) that tur
 - Device registration via MAC address (TRMNL API compatible)
 - Battery voltage reporting
 - Automatic retry with failure counting (WiFi and server)
+ - Initialize RTC from TRMNL server `Date` header when device clock is unset (no NTP required)
 
 ## Hardware
 
@@ -36,6 +37,10 @@ pio run -t upload    # flash via USB
 
 Hold the button on boot to re-enter setup mode.
 
+Reset UX:
+- Hold >5s after wake: clear WiFi credentials (returns to captive portal)
+- Hold ~15s after wake: factory reset (clear all settings + reboot)
+
 ## Operation
 
 Each wake cycle:
@@ -45,6 +50,13 @@ Each wake cycle:
 4. Enter deep sleep (default 15 min)
 
 The device wakes on timer expiry or button press.
+
+Compatibility / Notes
+- The firmware follows official TRMNL header and API behavior: it sends `ID` and `Access-Token` headers and includes a `Wake-Time` header for statistics.
+- Image downloads from the same TRMNL server include authentication headers so self-hosted servers should accept the same `Access-Token`.
+- Debug logs (when enabled) are posted to `/api/log` in an official-compatible `logs` array payload with fields such as `created_at`, `source_path`, `wake_reason`, `battery_voltage`, and `firmware_version`.
+- Log submission is deferred on low battery.
+- The device will attempt to initialize its RTC from the HTTP `Date` response header on first successful server contact if the RTC is unset.
 
 ## Links
 

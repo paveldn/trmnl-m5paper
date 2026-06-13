@@ -90,7 +90,7 @@ select{appearance:auto}
 <div class="section">
 <button class="btn-reset" onclick="resetDevice()">Factory Reset</button>
 <p class="info">MAC: <strong>%MAC%</strong><br>FW: %FW%<br>
-Hold button >3s after wake to return to this setup.</p>
+Hold button >5s after wake to return to this setup.</p>
 </div>
 </div>
 <script>

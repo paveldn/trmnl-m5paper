@@ -20,7 +20,7 @@
  * 
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
  * 
- * @version 2.3.0
+ * @version 2.4.0
  * @see https://docs.trmnl.com/go/diy/byod
  */
 
@@ -35,14 +35,16 @@
 #include <Preferences.h>
 #include <Update.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include "captive_portal.h"
+#include "api_helpers.h"
 
 // ─────────────────────────── Hardware Defines ───────────────────────────
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #define DEVICE_MODEL        "m5paper"
-#define FW_VERSION          "2.3.0"
+#define FW_VERSION          "2.4.0"
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
 
@@ -91,16 +93,20 @@
 #define KEY_LAST_FILENAME      "last_file"
 #define KEY_IMAGE_ETAG         "image_etag"
 #define KEY_IMAGE_LASTMOD      "image_lastmod"
+#define KEY_RTC_SET            "rtc_set"
+#define KEY_LOG_ID             "log_id"
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR int partialRefreshCount = 0;
 RTC_DATA_ATTR uint8_t savedBSSID[6] = {0};
 RTC_DATA_ATTR uint8_t savedChannel = 0;
 RTC_DATA_ATTR int wifiFailCount = 0;
+RTC_DATA_ATTR int lastWakeTime = 0;
 
 // ─────────────────────────── Globals ───────────────────────────
 Preferences prefs;
 M5Canvas canvas(&M5.Display);
+unsigned long startupMillis = 0;
 String configuredSSID;
 String configuredPass;
 String apiKey;
@@ -127,6 +133,106 @@ void deviceLog(const char* fmt, ...) {
 #endif
 }
 
+// Forward declare UI helpers used by runtime reset handler
+void showErrorScreen(const String& message);
+void showSetupScreen(const String& message);
+
+// Try to initialize RTC from an HTTP Date header (RFC1123). Only sets time
+// if current system time looks uninitialized (before 2020) or if force=true.
+static bool tryInitRtcFromHttpDate(const String &dateHeader, bool force = false) {
+  if (dateHeader.length() == 0) return false;
+
+  time_t now = time(nullptr);
+  // If time already seems valid and not forced, skip
+  if (!force && now > 1600000000UL) {
+    deviceLog("RTC already set (epoch=%lu) - skipping\n", (unsigned long)now);
+    return false; // ~2020-09-13
+  }
+
+  char buf[64];
+  dateHeader.toCharArray(buf, sizeof(buf));
+
+  // Expected format: "Sat, 13 Jun 2020 12:34:56 GMT"
+  char wk[4], mon[4];
+  int day, year, hh, mm, ss;
+  int rc = sscanf(buf, "%3s, %d %3s %d %d:%d:%d GMT", wk, &day, mon, &year, &hh, &mm, &ss);
+  if (rc < 7) return false;
+
+  // map month
+  const char* months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  int monIdx = -1;
+  for (int i = 0; i < 12; ++i) {
+    if (strncmp(mon, months + i*3, 3) == 0) { monIdx = i; break; }
+  }
+  if (monIdx < 0) return false;
+
+  struct tm tm;
+  memset(&tm, 0, sizeof(tm));
+  tm.tm_mday = day;
+  tm.tm_mon = monIdx;
+  tm.tm_year = year - 1900;
+  tm.tm_hour = hh;
+  tm.tm_min = mm;
+  tm.tm_sec = ss;
+
+  // Ensure mktime treats tm as UTC by setting TZ to UTC temporarily
+  setenv("TZ", "UTC0", 1);
+  tzset();
+  time_t t = mktime(&tm);
+  if (t <= 0) {
+    deviceLog("RTC parse produced invalid epoch\n");
+    return false;
+  }
+
+  struct timeval tv = { .tv_sec = t, .tv_usec = 0 };
+  if (settimeofday(&tv, nullptr) == 0) {
+    deviceLog("RTC set from server Date: %s -> %lu\n", buf, (unsigned long)t);
+    // Persist a flag/timestamp that RTC was set
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putInt(KEY_RTC_SET, (int)t);
+    prefs.end();
+    return true;
+  }
+  return false;
+}
+
+// Check for a runtime long-press on the wake button. Only blocks if the
+// button is actually held. 5s = WiFi clear, 15s = factory reset.
+static void checkRuntimeReset() {
+  pinMode(M5PAPER_WAKE_BUTTON, INPUT_PULLUP);
+  if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+    deviceLog("Runtime button press detected\n");
+    unsigned long start = millis();
+    while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+      unsigned long held = millis() - start;
+      if (held >= BUTTON_FACTORY_RESET) {
+        deviceLog("Runtime factory reset triggered\n");
+        prefs.begin(NVS_NAMESPACE, false);
+        prefs.clear();
+        prefs.end();
+        showErrorScreen("Factory Reset\n\nAll settings cleared\nRestarting...");
+        delay(1500);
+        ESP.restart();
+        return;
+      }
+      delay(50);
+    }
+    unsigned long held = millis() - start;
+    if (held >= BUTTON_HOLD_TIME) {
+      deviceLog("Runtime WiFi credentials clear triggered\n");
+      prefs.begin(NVS_NAMESPACE, false);
+      prefs.remove(KEY_WIFI_SSID);
+      prefs.remove(KEY_WIFI_PASS);
+      prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
+      prefs.end();
+      showSetupScreen("WiFi cleared\n\nRestarting...");
+      delay(1000);
+      ESP.restart();
+      return;
+    }
+  }
+}
+
 // WiFi power-save helpers: disable PS during transfers, enable otherwise
 static inline void disableWiFiPS() {
   esp_wifi_set_ps(WIFI_PS_NONE);
@@ -141,6 +247,7 @@ const char* FW_VERSION_STR = FW_VERSION;
 int DEFAULT_REFRESH_RATE_VAL = DEFAULT_REFRESH_RATE;
 int WIFI_AP_TIMEOUT_VAL = WIFI_AP_TIMEOUT;
 const char* DEFAULT_API_BASE_URL_STR = DEFAULT_API_BASE_URL;
+const char* UPDATE_SOURCE_STR = "m5paper";
 
 // ─────────────────────────── Forward Declarations ───────────────────────────
 void loadSettings();
@@ -151,6 +258,10 @@ void clearAllSettings();
 bool connectWiFi();
 float getBatteryVoltage();
 bool isExternalPowerPresent();
+bool isBatteryCharging();
+String getWifiBand();
+static String wifiStatusString(wl_status_t status);
+static String wakeReasonString(esp_sleep_wakeup_cause_t reason);
 void fetchAndDisplay(float batteryVoltage);
 void displayImage(const char* imageUrl);
 bool downloadAndDisplayImage(const char* url);
@@ -200,6 +311,7 @@ void setup() {
   pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
   digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
   deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
+  startupMillis = millis();
 
   // ── Display init ──
   M5.Display.setRotation(1);  // landscape 960x540
@@ -436,6 +548,7 @@ void wifiErrorSleep() {
 
   deviceLog("WiFi unreachable after fast reconnect and full scan - sleeping %ds\n", refreshRate);
   showErrorScreen("Can't connect to WiFi\n" + configuredSSID + "\n\nRetrying in " + String(refreshRate) + "s");
+  checkRuntimeReset();
   goToDeepSleep(refreshRate);
 }
 
@@ -461,7 +574,7 @@ void apiErrorSleep() {
   deviceLog("API retry #%d, sleeping %ds\n", retryCount, sleepTime);
   prefs.putInt(KEY_API_RETRY_COUNT, retryCount + 1);
   prefs.end();
-
+  checkRuntimeReset();
   goToDeepSleep(sleepTime);
 }
 
@@ -469,70 +582,85 @@ void apiErrorSleep() {
 //  LOG SUBMISSION (POST /api/log)
 // ═══════════════════════════════════════════════════════════════════════════════
 void sendLogs() {
+  // Build a message from debug buffer if present, otherwise synthesize minimal metadata
+  String msg = "";
 #ifdef DEBUG_LOGS
   Serial.printf("[Log] sendLogs called: bufLen=%d baseUrl='%s' wifi=%d\n",
     logBuffer.length(), apiBaseUrl.c_str(), WiFi.status());
+  if (logBuffer.length() > 0) msg = logBuffer;
+#endif
 
-  if (logBuffer.length() == 0) { 
-    Serial.println("[Log] SKIP: buffer empty");
-    return; 
+  // If no debug buffer, synthesize a short message with device metadata
+  if (msg.length() == 0) {
+    prefs.begin(NVS_NAMESPACE, true);
+    int rtc = prefs.getInt(KEY_RTC_SET, 0);
+    prefs.end();
+    msg = String("auto-log: fw=") + String(FW_VERSION_STR) + ", mac=" + WiFi.macAddress() + ", fid=" + friendlyId + ", rtc=" + String(rtc);
   }
 
-  // Only send to non-official servers (local TRMNL)
-  if (apiBaseUrl == DEFAULT_API_BASE_URL) { 
-    Serial.println("[Log] SKIP: official server");
-    return; 
-  }
-
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Log] SKIP: WiFi not connected, discarding");
-    logBuffer = "";
-    return;
-  }
-
-  // Check battery before sending logs — avoid network activity on low battery
-  float batV = readBatteryAvg(6, 50);
+  float batV = getBatteryVoltage();
   if (batV > 0.5 && batV < LOW_BATTERY_VOLTAGE && !isExternalPowerPresent()) {
+#ifdef DEBUG_LOGS
     Serial.println("[Log] SKIP: low battery, deferring logs");
+#endif
     return;
   }
+
+  prefs.begin(NVS_NAMESPACE, false);
+  uint32_t logId = prefs.getUInt(KEY_LOG_ID, 1);
+  prefs.putUInt(KEY_LOG_ID, logId + 1);
+  prefs.end();
 
   disableWiFiPS();
   HTTPClient http;
   String url = apiBaseUrl + "/api/log";
   http.begin(url);
   http.setTimeout(5000);
-  if (apiKey.length() > 0) {
-    http.addHeader("Access-Token", apiKey);
-  }
-  http.addHeader("ID", WiFi.macAddress());
-  http.addHeader("Content-Type", "application/json");
+  addLogHeaders(http, WiFi.macAddress(), apiKey);
 
-  // Server expects: {"level": "info", "message": "..."}
-  // Truncate to 5000 chars max as required by server
-  String msg = logBuffer;
-  if (msg.length() > 5000) {
-    msg = msg.substring(0, 5000);
-  }
+  StaticJsonDocument<2048> doc;
+  JsonArray logs = doc.createNestedArray("logs");
+  JsonObject entry = logs.createNestedObject();
 
-  JsonDocument doc;
-  doc["level"] = "info";
-  doc["message"] = msg;
+  entry["created_at"] = (uint32_t)time(nullptr);
+  entry["id"] = logId;
+  entry["message"] = msg;
+  entry["source_line"] = 0;
+  entry["source_path"] = "main.cpp";
+
+  entry["wifi_signal"] = WiFi.RSSI();
+  entry["wifi_status"] = wifiStatusString(WiFi.status());
+  entry["refresh_rate"] = refreshRate;
+  entry["sleep_duration"] = lastWakeTime;
+  entry["firmware_version"] = String(FW_VERSION_STR);
+  entry["special_function"] = "none";
+  entry["battery_voltage"] = batV;
+  entry["wake_reason"] = wakeReasonString(esp_sleep_get_wakeup_cause());
+  entry["free_heap_size"] = ESP.getFreeHeap();
+  entry["max_alloc_size"] = ESP.getMaxAllocHeap();
 
   String payload;
   serializeJson(doc, payload);
 
+#ifdef DEBUG_LOGS
   Serial.printf("[Log] POST %s (%d bytes payload)\n", url.c_str(), payload.length());
+#endif
 
   int code = http.POST(payload);
   String response = http.getString();
+#ifdef DEBUG_LOGS
   Serial.printf("[Log] Response: %d - %s\n", code, response.c_str());
+#endif
   http.end();
 
   // Re-enable power-save after network activity
   enableWiFiPS();
 
-  logBuffer = "";
+#ifdef DEBUG_LOGS
+  // Clear debug buffer only on success
+  if (code >= 200 && code < 300) {
+    logBuffer = "";
+  }
 #endif
 }
 
@@ -548,10 +676,7 @@ void registerDevice() {
   http.begin(url);
   http.setTimeout(15000);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  http.addHeader("ID", WiFi.macAddress());
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("FW-Version", FW_VERSION);
-  http.addHeader("Model", DEVICE_MODEL);
+  addSetupHeaders(http, WiFi.macAddress(), FW_VERSION_STR, DEVICE_MODEL);
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
@@ -562,6 +687,9 @@ void registerDevice() {
     apiErrorSleep();
     return;
   }
+
+  // Try to initialize RTC from server Date header if clock is unset
+  tryInitRtcFromHttpDate(http.header("Date"));
 
   String payload = http.getString();
   http.end();
@@ -636,6 +764,56 @@ bool isExternalPowerPresent() {
   return present;
 }
 
+bool isBatteryCharging() {
+  return M5.Power.isCharging() == m5::Power_Class::is_charging_t::is_charging;
+}
+
+String getWifiBand() {
+  wifi_bandwidth_t bandwidth;
+  if (esp_wifi_get_bandwidth(WIFI_IF_STA, &bandwidth) == ESP_OK) {
+    switch (bandwidth) {
+      case WIFI_BW_HT20: return "HT20";
+      case WIFI_BW_HT40: return "HT40";
+#ifdef WIFI_BW_HT80
+      case WIFI_BW_HT80: return "HT80";
+#endif
+#ifdef WIFI_BW_HT160
+      case WIFI_BW_HT160: return "HT160";
+#endif
+      default: break;
+    }
+  }
+  return "";
+}
+
+static String wifiStatusString(wl_status_t status) {
+  switch (status) {
+    case WL_IDLE_STATUS: return "IDLE";
+    case WL_NO_SSID_AVAIL: return "NO_SSID";
+    case WL_SCAN_COMPLETED: return "SCAN_COMPLETED";
+    case WL_CONNECTED: return "CONNECTED";
+    case WL_CONNECT_FAILED: return "CONNECT_FAILED";
+    case WL_CONNECTION_LOST: return "CONNECTION_LOST";
+    case WL_DISCONNECTED: return "DISCONNECTED";
+    default: return "UNKNOWN";
+  }
+}
+
+static String wakeReasonString(esp_sleep_wakeup_cause_t reason) {
+  switch (reason) {
+    case ESP_SLEEP_WAKEUP_UNDEFINED: return "UNDEFINED";
+    case ESP_SLEEP_WAKEUP_ALL: return "ALL";
+    case ESP_SLEEP_WAKEUP_TIMER: return "TIMER";
+    case ESP_SLEEP_WAKEUP_EXT0: return "EXT0";
+    case ESP_SLEEP_WAKEUP_EXT1: return "EXT1";
+    case ESP_SLEEP_WAKEUP_GPIO: return "GPIO";
+    case ESP_SLEEP_WAKEUP_UART: return "UART";
+    case ESP_SLEEP_WAKEUP_ULP: return "ULP";
+    case ESP_SLEEP_WAKEUP_TOUCHPAD: return "TOUCHPAD";
+    default: return "UNKNOWN";
+  }
+}
+
 void fetchAndDisplay(float batteryVoltage) {
   deviceLog("GET /api/display...\n");
   disableWiFiPS();
@@ -646,19 +824,29 @@ void fetchAndDisplay(float batteryVoltage) {
   http.setTimeout(30000);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
 
-  // TRMNL API headers
-  if (apiKey.length() > 0) {
-    http.addHeader("Access-Token", apiKey);
+  bool imageCached = false;
+  prefs.begin(NVS_NAMESPACE, true);
+  if (prefs.isKey(KEY_LAST_FILENAME)) {
+    imageCached = true;
   }
-  http.addHeader("ID", WiFi.macAddress());
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("Battery-Voltage", String(batteryVoltage, 2));
-  http.addHeader("FW-Version", FW_VERSION);
-  http.addHeader("RSSI", String(WiFi.RSSI()));
-  http.addHeader("Model", DEVICE_MODEL);
-  http.addHeader("Width", String(DISPLAY_WIDTH));
-  http.addHeader("Height", String(DISPLAY_HEIGHT));
-  http.addHeader("Refresh-Rate", String(refreshRate));
+  prefs.end();
+
+  addDisplayHeaders(http,
+                    WiFi.macAddress(),
+                    apiKey,
+                    refreshRate,
+                    batteryVoltage,
+                    WiFi.RSSI(),
+                    imageCached,
+                    lastWakeTime,
+                    FW_VERSION_STR,
+                    DEVICE_MODEL,
+                    getWifiBand(),
+                    isBatteryCharging(),
+                    isExternalPowerPresent(),
+                    UPDATE_SOURCE_STR,
+                    DISPLAY_WIDTH,
+                    DISPLAY_HEIGHT);
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
@@ -669,6 +857,9 @@ void fetchAndDisplay(float batteryVoltage) {
     apiErrorSleep();
     return;
   }
+
+  // Initialize RTC from server Date header if needed
+  tryInitRtcFromHttpDate(http.header("Date"));
 
   String payload = http.getString();
   http.end();
@@ -705,6 +896,7 @@ void fetchAndDisplay(float batteryVoltage) {
     deviceLog("Status 202: plugin not attached\n");
     showSetupScreen("Waiting for setup\n\nID: " + friendlyId + "\nMAC: " + WiFi.macAddress());
     saveRefreshRate(SLEEP_NOT_CONNECTED);
+    checkRuntimeReset();
     goToDeepSleep(SLEEP_NOT_CONNECTED);
     return;
   }
@@ -719,6 +911,7 @@ void fetchAndDisplay(float batteryVoltage) {
 
   if (status != 0) {
     deviceLog("API: unexpected status %d\n", status);
+    checkRuntimeReset();
     goToDeepSleep(refreshRate);
     return;
   }
@@ -748,6 +941,7 @@ void fetchAndDisplay(float batteryVoltage) {
   // ── Check if image needs update ──
   if (!imageUrl || strlen(imageUrl) == 0) {
     deviceLog("No image_url — sleeping\n");
+    checkRuntimeReset();
     goToDeepSleep(refreshRate);
     return;
   }
@@ -769,6 +963,9 @@ void fetchAndDisplay(float batteryVoltage) {
   if (needsUpdate) {
     displayImage(imageUrl);
   }
+
+  // Allow user to perform runtime resets by holding the wake button now.
+  checkRuntimeReset();
 
   goToDeepSleep(refreshRate);
 }
@@ -806,12 +1003,22 @@ bool downloadAndDisplayImage(const char* url) {
   disableWiFiPS();
 
   HTTPClient http;
-  http.begin(url);
+  String sUrl = String(url);
+  http.begin(sUrl);
+  if (sUrl.startsWith(apiBaseUrl)) {
+    addAuthHeaders(http, WiFi.macAddress(), apiKey);
+  }
 
   // Send conditional GET if we have a stored ETag/Last-Modified
   prefs.begin(NVS_NAMESPACE, true);
-  String storedEtag = prefs.getString(KEY_IMAGE_ETAG, "");
-  String storedLast = prefs.getString(KEY_IMAGE_LASTMOD, "");
+  String storedEtag = "";
+  String storedLast = "";
+  if (prefs.isKey(KEY_IMAGE_ETAG)) {
+    storedEtag = prefs.getString(KEY_IMAGE_ETAG, "");
+  }
+  if (prefs.isKey(KEY_IMAGE_LASTMOD)) {
+    storedLast = prefs.getString(KEY_IMAGE_LASTMOD, "");
+  }
   prefs.end();
   if (storedEtag.length() > 0) {
     http.addHeader("If-None-Match", storedEtag);
@@ -890,10 +1097,12 @@ bool downloadAndDisplayImage(const char* url) {
   deviceLog("Downloaded: %d bytes\n", bytesRead);
 
   // Disconnect WiFi early so decoding/drawing happens with radio off
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  esp_wifi_stop();
-  delay(10);
+  if (WiFi.getMode() != WIFI_OFF) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    esp_wifi_stop();
+    delay(10);
+  }
   if (bytesRead < 100) {
     deviceLog("Data too small\n");
     free(buffer);
@@ -1134,6 +1343,7 @@ void goToDeepSleep(int seconds) {
   if (seconds < 15) 
     seconds = 16;
 
+  lastWakeTime = (millis() - startupMillis) / 1000;
   deviceLog("Sleep: %d seconds\n", seconds);
   sendLogs();
   Serial.flush();
@@ -1159,7 +1369,7 @@ void goToDeepSleep(int seconds) {
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
-  delay(2000);  // Allow hardware time to settle before deep sleep
+  delay(2100);  // Allow hardware time to settle before deep sleep
 
   esp_deep_sleep((uint64_t)seconds * 1000000ULL);
 }
