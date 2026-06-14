@@ -315,7 +315,7 @@ void setup() {
 
   // ── Display init ──
   M5.Display.setRotation(1);  // landscape 960x540
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast); // Full refresh on first boot
 
   // Power optimization
   setCpuFrequencyMhz(80);
@@ -340,7 +340,7 @@ void setup() {
 
     if (holdTime >= BUTTON_FACTORY_RESET) {
       deviceLog("Factory reset (15s hold)\n");
-      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      M5.Display.setEpdMode(epd_mode_t::epd_fast);
       prefs.begin(NVS_NAMESPACE, false);
       prefs.clear();
       prefs.end();
@@ -980,7 +980,7 @@ void displayImage(const char* imageUrl) {
     partialRefreshCount++;
 
     if (partialRefreshCount >= FULL_REFRESH_INTERVAL) {
-      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      M5.Display.setEpdMode(epd_mode_t::epd_fast);
       partialRefreshCount = 0;
       deviceLog("Full refresh (ghost clear)\n");
     } else {
@@ -1192,7 +1192,7 @@ bool performOTA(const char* firmwareUrl) {
 //  DISPLAY HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 void showLoadingScreen() {
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -1206,7 +1206,7 @@ void showLoadingScreen() {
 }
 
 void showSetupScreen(const String& message) {
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -1235,7 +1235,7 @@ void showSetupScreen(const String& message) {
 }
 
 void showErrorScreen(const String& message) {
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -1266,7 +1266,7 @@ void showErrorScreen(const String& message) {
 //  LOW BATTERY WARNING
 // ═══════════════════════════════════════════════════════════════════════════════
 void showLowBatteryAndShutdown() {
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
   canvas.fillSprite(TFT_WHITE);
 
   // Draw battery icon (centered, large) — Material Design style battery_alert
