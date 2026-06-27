@@ -11,7 +11,11 @@ Custom firmware for [M5Paper](https://docs.m5stack.com/en/core/m5paper) that tur
 - Device registration via MAC address (TRMNL API compatible)
 - Battery voltage reporting
 - Automatic retry with failure counting (WiFi and server)
- - Initialize RTC from TRMNL server `Date` header when device clock is unset (no NTP required)
+- Initialize RTC from TRMNL server Date header when device clock is unset (no NTP required)
+- OTA firmware updates
+- Daily GitHub release check (once per 24h)
+- OTA safety cooldown (max one OTA attempt per 24h)
+- Clone-aware OTA source (uses GitHub origin repo at build time)
 
 ## Hardware
 
@@ -50,6 +54,40 @@ Each wake cycle:
 4. Enter deep sleep (default 15 min)
 
 The device wakes on timer expiry or button press.
+
+## OTA Updates
+
+The firmware supports two OTA trigger paths:
+
+1. Server-driven OTA (/api/display):
+- Uses update_firmware + firmware_url when returned by the TRMNL-compatible API.
+
+2. GitHub releases OTA fallback:
+- Checks releases/latest once per 24 hours.
+- Downloads the first .bin asset when release version is newer than FW_VERSION.
+
+Safety rules:
+- GitHub check cooldown: 24h.
+- OTA attempt cooldown: 24h.
+- OTA is skipped on low battery unless external power is present.
+
+### Clone-Aware Release Source
+
+At build time, PlatformIO runs a pre-script that reads git remote origin and injects:
+- OTA_GITHUB_OWNER
+- OTA_GITHUB_REPO
+
+This means if someone forks/clones the project and builds from their own GitHub remote,
+OTA checks their repository releases automatically.
+
+If origin cannot be parsed as a GitHub URL, firmware falls back to default:
+- owner: paveldn
+- repo: trmnl-m5paper
+
+The pre-build script also reports why fallback was used:
+- no remote.origin.url configured,
+- non-GitHub origin host detected (for example GitLab or Bitbucket), or
+- GitHub origin present but owner/repo could not be parsed.
 
 Compatibility / Notes
 - The firmware follows official TRMNL header and API behavior: it sends `ID` and `Access-Token` headers and includes a `Wake-Time` header for statistics.

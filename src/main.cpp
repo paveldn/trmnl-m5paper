@@ -20,7 +20,7 @@
  * 
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
  * 
- * @version 2.4.0
+ * @version 2.5.0
  * @see https://docs.trmnl.com/go/diy/byod
  */
 
@@ -44,7 +44,7 @@
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #define DEVICE_MODEL        "m5paper"
-#define FW_VERSION          "2.4.0"
+#define FW_VERSION          "2.5.0"
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
 
@@ -93,8 +93,22 @@
 #define KEY_LAST_FILENAME      "last_file"
 #define KEY_IMAGE_ETAG         "image_etag"
 #define KEY_IMAGE_LASTMOD      "image_lastmod"
+#define KEY_OTA_LAST_CHECK     "ota_last_chk"
+#define KEY_OTA_LAST_ATTEMPT   "ota_last_try"
 #define KEY_RTC_SET            "rtc_set"
 #define KEY_LOG_ID             "log_id"
+
+// ─────────────────────────── OTA via GitHub Releases ───────────────────────────
+#define OTA_SAFETY_INTERVAL_SEC 86400UL
+#ifndef OTA_GITHUB_OWNER
+#define OTA_GITHUB_OWNER "paveldn"
+#endif
+
+#ifndef OTA_GITHUB_REPO
+#define OTA_GITHUB_REPO "trmnl-m5paper"
+#endif
+
+#define OTA_GITHUB_API_URL "https://api.github.com/repos/" OTA_GITHUB_OWNER "/" OTA_GITHUB_REPO "/releases/latest"
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR int partialRefreshCount = 0;
@@ -113,6 +127,7 @@ String apiKey;
 String apiBaseUrl;
 String friendlyId;
 int refreshRate = DEFAULT_REFRESH_RATE;
+bool forceOtaOnThisBoot = false;
 
 // ─────────────────────────── Log Buffer ───────────────────────────
 #ifdef DEBUG_LOGS
@@ -275,6 +290,12 @@ void wifiErrorSleep();
 void apiErrorSleep();
 void sendLogs();
 void showLowBatteryAndShutdown();
+bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force = false);
+bool getCurrentEpoch(time_t& epochOut);
+bool isIntervalElapsed(const char* key, uint32_t intervalSec);
+void markIntervalNow(const char* key);
+bool parseVersionParts(const String& version, int& major, int& minor, int& patch);
+int compareVersions(const String& a, const String& b);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SETUP — Main algorithm (runs on every wake from deep sleep)
@@ -294,6 +315,14 @@ void setup() {
   if (wakeup == ESP_SLEEP_WAKEUP_TIMER) wakeStr = "TIMER";
   else if (wakeup == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "BUTTON";
   bool coldBoot = (wakeup == ESP_SLEEP_WAKEUP_UNDEFINED);
+
+#ifdef FORCE_OTA_ON_NEXT_BOOT
+  // Test helper: force OTA logic once on cold boot only.
+  forceOtaOnThisBoot = coldBoot;
+  if (forceOtaOnThisBoot) {
+    deviceLog("OTA: FORCE_OTA_ON_NEXT_BOOT active for this boot\n");
+  }
+#endif
 
   // ── Initialize M5Paper ──
   auto cfg = M5.config();
@@ -322,7 +351,8 @@ void setup() {
   btStop();
 
   canvas.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-  pinMode(M5PAPER_WAKE_BUTTON, INPUT_PULLUP);
+  // GPIO39 is input-only and has no internal pull-up on ESP32.
+  pinMode(M5PAPER_WAKE_BUTTON, INPUT);
 
   // ── Check reset button ──
   // Aligned with TRMNL: 5s hold = WiFi clear, 15s = factory reset
@@ -403,13 +433,25 @@ void setup() {
   // ── Ping server (fetch display) ──
   float batteryVoltage = getBatteryVoltage();
   fetchAndDisplay(batteryVoltage);
+
+  // Safety net: setup should never fall through to loop() in normal operation.
+  // If it does, go to sleep instead of spinning at full speed.
+  deviceLog("Unexpected setup fallthrough, forcing sleep\n");
+  goToDeepSleep(refreshRate);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  LOOP (only used during captive portal)
 // ═══════════════════════════════════════════════════════════════════════════════
 void loop() {
-  // Only reached during captive portal operation
+  // Defensive fallback: loop() should not run in normal firmware flow.
+  deviceLog("Unexpected loop() entry, forcing sleep\n");
+  int sleepSeconds = (refreshRate > 0) ? refreshRate : DEFAULT_REFRESH_RATE;
+  goToDeepSleep(sleepSeconds);
+
+  // Should be unreachable, but restart if deep sleep setup ever returns.
+  delay(1000);
+  ESP.restart();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -463,6 +505,168 @@ void clearAllSettings() {
   friendlyId = "";
   refreshRate = DEFAULT_REFRESH_RATE;
   savedChannel = 0;
+}
+
+bool getCurrentEpoch(time_t& epochOut) {
+  time(&epochOut);
+  if (epochOut >= 1700000000) {
+    return true;
+  }
+
+  // Sync time only when needed for OTA intervals.
+  configTime(0, 0, "time.google.com", "time.cloudflare.com", "pool.ntp.org");
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo, 10000)) {
+    time(&epochOut);
+    return (epochOut >= 1700000000);
+  }
+  return false;
+}
+
+bool isIntervalElapsed(const char* key, uint32_t intervalSec) {
+  time_t now;
+  if (!getCurrentEpoch(now)) {
+    deviceLog("OTA: time unavailable, interval bypass for %s\n", key);
+    return true;
+  }
+
+  prefs.begin(NVS_NAMESPACE, true);
+  uint32_t last = prefs.getULong(key, 0);
+  prefs.end();
+
+  if ((last > 0) && ((uint32_t)now > last && ((uint32_t)now - last) < intervalSec)) {
+    uint32_t remaining = intervalSec - ((uint32_t)now - last);
+    deviceLog("OTA: %s cooldown active (%lus left)\n", key, (unsigned long)remaining);
+    return false;
+  }
+
+  return true;
+}
+
+void markIntervalNow(const char* key) {
+  time_t now;
+  if (!getCurrentEpoch(now)) {
+    return;
+  }
+
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putULong(key, (uint32_t)now);
+  prefs.end();
+}
+
+bool parseVersionParts(const String& version, int& major, int& minor, int& patch) {
+  String v = version;
+  v.trim();
+
+  while (v.length() > 0 && !isDigit(v[0])) {
+    v.remove(0, 1);
+  }
+
+  int dash = v.indexOf('-');
+  if (dash >= 0) v = v.substring(0, dash);
+  int plus = v.indexOf('+');
+  if (plus >= 0) v = v.substring(0, plus);
+
+  major = 0;
+  minor = 0;
+  patch = 0;
+  int matched = sscanf(v.c_str(), "%d.%d.%d", &major, &minor, &patch);
+  return matched >= 2;
+}
+
+int compareVersions(const String& a, const String& b) {
+  int aMaj, aMin, aPat;
+  int bMaj, bMin, bPat;
+
+  if (!parseVersionParts(a, aMaj, aMin, aPat)) return 0;
+  if (!parseVersionParts(b, bMaj, bMin, bPat)) return 0;
+
+  if (aMaj != bMaj) return (aMaj > bMaj) ? 1 : -1;
+  if (aMin != bMin) return (aMin > bMin) ? 1 : -1;
+  if (aPat != bPat) return (aPat > bPat) ? 1 : -1;
+  return 0;
+}
+
+bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force) {
+  firmwareUrlOut = "";
+  versionOut = "";
+
+  if (!force && !isIntervalElapsed(KEY_OTA_LAST_CHECK, OTA_SAFETY_INTERVAL_SEC)) {
+    return false;
+  }
+
+  if (force) {
+    deviceLog("OTA: forcing GitHub release check (cooldown bypass)\n");
+  }
+
+  // Mark before attempting network so failed checks are not retried on every wake.
+  markIntervalNow(KEY_OTA_LAST_CHECK);
+
+  deviceLog("OTA: checking GitHub releases\n");
+  disableWiFiPS();
+
+  HTTPClient http;
+  http.begin(OTA_GITHUB_API_URL);
+  http.setTimeout(15000);
+  http.addHeader("User-Agent", "trmnl-m5paper");
+  http.addHeader("Accept", "application/vnd.github+json");
+  http.addHeader("X-GitHub-Api-Version", "2022-11-28");
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    deviceLog("OTA: GitHub release check HTTP %d\n", code);
+    http.end();
+    enableWiFiPS();
+    return false;
+  }
+
+  String payload = http.getString();
+  http.end();
+  enableWiFiPS();
+
+  JsonDocument filter;
+  filter["tag_name"] = true;
+  JsonObject filterAsset = filter["assets"].to<JsonArray>().add<JsonObject>();
+  filterAsset["name"] = true;
+  filterAsset["browser_download_url"] = true;
+
+  JsonDocument doc;
+  if (deserializeJson(doc, payload, DeserializationOption::Filter(filter))) {
+    deviceLog("OTA: GitHub response parse error\n");
+    return false;
+  }
+
+  String tag = doc["tag_name"] | "";
+  if (tag.length() == 0) {
+    deviceLog("OTA: GitHub release missing tag_name\n");
+    return false;
+  }
+
+  if (compareVersions(tag, String(FW_VERSION)) <= 0) {
+    deviceLog("OTA: no newer release (current %s, latest %s)\n", FW_VERSION, tag.c_str());
+    return false;
+  }
+
+  JsonArray assets = doc["assets"].as<JsonArray>();
+  String binUrl = "";
+  for (JsonObject asset : assets) {
+    String name = asset["name"] | "";
+    String url = asset["browser_download_url"] | "";
+    if (url.endsWith(".bin") || name.endsWith(".bin")) {
+      binUrl = url;
+      break;
+    }
+  }
+
+  if (binUrl.length() == 0) {
+    deviceLog("OTA: newer release %s found but no .bin asset\n", tag.c_str());
+    return false;
+  }
+
+  firmwareUrlOut = binUrl;
+  versionOut = tag;
+  deviceLog("OTA: update available %s\n", tag.c_str());
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -618,9 +822,9 @@ void sendLogs() {
   http.setTimeout(5000);
   addLogHeaders(http, WiFi.macAddress(), apiKey);
 
-  StaticJsonDocument<2048> doc;
-  JsonArray logs = doc.createNestedArray("logs");
-  JsonObject entry = logs.createNestedObject();
+  JsonDocument doc;
+  JsonArray logs = doc["logs"].to<JsonArray>();
+  JsonObject entry = logs.add<JsonObject>();
 
   entry["created_at"] = (uint32_t)time(nullptr);
   entry["id"] = logId;
@@ -923,6 +1127,11 @@ void fetchAndDisplay(float batteryVoltage) {
   const char* firmwareUrl = doc["firmware_url"];
   int newRefreshRate = doc["refresh_rate"] | refreshRate;
 
+  String otaUrl = "";
+  String otaVersion = "";
+  bool forceOta = forceOtaOnThisBoot;
+  forceOtaOnThisBoot = false;  // Consume one-shot force for this boot
+
   // Update refresh rate from server
   if (newRefreshRate != refreshRate) {
     deviceLog("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
@@ -931,11 +1140,40 @@ void fetchAndDisplay(float batteryVoltage) {
 
   // ── OTA firmware update ──
   if (updateFirmware && firmwareUrl && strlen(firmwareUrl) > 0) {
-    deviceLog("OTA update: %s\n", firmwareUrl);
-    if (performOTA(firmwareUrl)) {
-      return;  // OTA success — device will restart
+    otaUrl = String(firmwareUrl);
+    otaVersion = "server";
+    if (forceOta) {
+      deviceLog("OTA: server OTA selected while force flag active\n");
     }
-    deviceLog("OTA failed, continuing...\n");
+  } else {
+    String githubUrl;
+    String githubVersion;
+    if (checkGitHubReleaseForUpdate(githubUrl, githubVersion, forceOta)) {
+      otaUrl = githubUrl;
+      otaVersion = githubVersion;
+    }
+  }
+
+  if (otaUrl.length() > 0) {
+    if (!forceOta && !isIntervalElapsed(KEY_OTA_LAST_ATTEMPT, OTA_SAFETY_INTERVAL_SEC)) {
+      deviceLog("OTA: attempt skipped due to 24h safety interval\n");
+    } else {
+      if (forceOta) {
+        deviceLog("OTA: forcing attempt (cooldown bypass)\n");
+      }
+      float otaVoltage = readBatteryAvg(4, 30);
+      bool externalPower = isExternalPowerPresent();
+      if (otaVoltage > 0.5 && otaVoltage < LOW_BATTERY_VOLTAGE && !externalPower) {
+        deviceLog("OTA: skipped due to low battery %.2fV\n", otaVoltage);
+      } else {
+        markIntervalNow(KEY_OTA_LAST_ATTEMPT);
+        deviceLog("OTA update (%s): %s\n", otaVersion.c_str(), otaUrl.c_str());
+        if (performOTA(otaUrl.c_str())) {
+          return;  // OTA success — device will restart
+        }
+        deviceLog("OTA failed, continuing...\n");
+      }
+    }
   }
 
   // ── Check if image needs update ──
@@ -1349,11 +1587,13 @@ void goToDeepSleep(int seconds) {
   Serial.flush();
   delay(10);
 
-  // Shut down WiFi radio before sleep
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  esp_wifi_stop();
-  delay(10);
+  // Shut down WiFi radio before sleep (guard against already-off state)
+  if (WiFi.getMode() != WIFI_OFF) {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    esp_wifi_stop();
+    delay(10);
+  }
 
   // Put IT8951E into STANDBY mode (0x0002) to reduce sleep current
   // STANDBY draws ~1-2mA vs ~5-10mA idle. Wakes with any host command
@@ -1363,8 +1603,9 @@ void goToDeepSleep(int seconds) {
   delay(100);
 
   // Configure wake sources
-  // Button press (GPIO39, active LOW) or timer
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)M5PAPER_WAKE_BUTTON, LOW);
+  // Button press (GPIO39, active LOW) or timer.
+  // Use EXT1 here because GPIO39 has no internal pull-up.
+  esp_sleep_enable_ext1_wakeup((1ULL << M5PAPER_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
  
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
