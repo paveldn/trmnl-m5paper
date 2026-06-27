@@ -130,7 +130,7 @@ int refreshRate = DEFAULT_REFRESH_RATE;
 bool forceOtaOnThisBoot = false;
 
 // ─────────────────────────── Log Buffer ───────────────────────────
-#ifdef DEBUG_LOGS
+#if defined(DEBUG_LOGS) || defined(ENABLE_SERVER_LOGS)
 String logBuffer;
 #endif
 
@@ -142,6 +142,8 @@ void deviceLog(const char* fmt, ...) {
   va_end(args);
 #ifdef DEBUG_LOGS
   Serial.print(buf);
+#endif
+#ifdef ENABLE_SERVER_LOGS
   if (logBuffer.length() < LOG_BUFFER_SIZE) {
     logBuffer += buf;
   }
@@ -301,8 +303,10 @@ int compareVersions(const String& a, const String& b);
 //  SETUP — Main algorithm (runs on every wake from deep sleep)
 // ═══════════════════════════════════════════════════════════════════════════════
 void setup() {
+#if defined(DEBUG_LOGS) || defined(ENABLE_SERVER_LOGS)
 #ifdef DEBUG_LOGS
   Serial.begin(115200);
+#endif
   logBuffer.reserve(LOG_BUFFER_SIZE);
 #endif
   bootCount++;
@@ -786,13 +790,16 @@ void apiErrorSleep() {
 //  LOG SUBMISSION (POST /api/log)
 // ═══════════════════════════════════════════════════════════════════════════════
 void sendLogs() {
+#ifndef ENABLE_SERVER_LOGS
+  return;
+#else
   // Build a message from debug buffer if present, otherwise synthesize minimal metadata
   String msg = "";
 #ifdef DEBUG_LOGS
   Serial.printf("[Log] sendLogs called: bufLen=%d baseUrl='%s' wifi=%d\n",
     logBuffer.length(), apiBaseUrl.c_str(), WiFi.status());
-  if (logBuffer.length() > 0) msg = logBuffer;
 #endif
+  if (logBuffer.length() > 0) msg = logBuffer;
 
   // If no debug buffer, synthesize a short message with device metadata
   if (msg.length() == 0) {
@@ -865,6 +872,13 @@ void sendLogs() {
   if (code >= 200 && code < 300) {
     logBuffer = "";
   }
+#endif
+
+#ifndef DEBUG_LOGS
+  if (code >= 200 && code < 300) {
+    logBuffer = "";
+  }
+#endif
 #endif
 }
 

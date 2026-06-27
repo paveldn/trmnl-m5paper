@@ -32,6 +32,19 @@ pio run              # build
 pio run -t upload    # flash via USB
 ```
 
+### Logging Flags
+
+Logging controls are split between server log submission and serial debug output:
+
+- `ENABLE_SERVER_LOGS`: controls sending logs to `/api/log` (enabled by default in `platformio.ini`).
+- `DEBUG_LOGS`: controls serial debug output (disabled by default in `platformio.ini`).
+
+Typical combinations:
+
+- Production with server logs only: `ENABLE_SERVER_LOGS` enabled, `DEBUG_LOGS` disabled.
+- Local serial debugging + server logs: enable both flags.
+- Silent mode: disable both flags.
+
 ## Setup
 
 1. Flash the firmware
