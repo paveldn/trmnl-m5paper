@@ -77,7 +77,11 @@ The firmware supports two OTA trigger paths:
 
 2. GitHub releases OTA fallback:
 - Checks releases/latest once per 24 hours.
-- Downloads the first .bin asset when release version is newer than FW_VERSION.
+- Downloads the asset matching `OTA_FIRMWARE_ASSET_NAME` when release version is newer than FW_VERSION.
+
+Default asset naming:
+- `OTA_FIRMWARE_ASSET_NAME` defaults to `m5paper.bin` (derived from `DEVICE_MODEL ".bin"`).
+- This prevents wrong-device updates when multiple firmware assets are published in one release.
 
 Safety rules:
 - GitHub check cooldown: 24h.
@@ -101,6 +105,9 @@ The pre-build script also reports why fallback was used:
 - no remote.origin.url configured,
 - non-GitHub origin host detected (for example GitLab or Bitbucket), or
 - GitHub origin present but owner/repo could not be parsed.
+
+Release workflow note:
+- `.github/workflows/release.yml` publishes `dist/m5paper.bin` so OTA can select a stable, device-specific asset name.
 
 Compatibility / Notes
 - The firmware follows official TRMNL header and API behavior: it sends `ID` and `Access-Token` headers and includes a `Wake-Time` header for statistics.

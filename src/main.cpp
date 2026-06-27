@@ -48,6 +48,10 @@
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
 
+#ifndef OTA_FIRMWARE_ASSET_NAME
+#define OTA_FIRMWARE_ASSET_NAME DEVICE_MODEL ".bin"
+#endif
+
 // ─────────────────────────── Configuration ───────────────────────────
 #define DEFAULT_API_BASE_URL   "https://trmnl.app"
 #define DEFAULT_REFRESH_RATE   900   // 15 minutes (in seconds)
@@ -653,17 +657,18 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
 
   JsonArray assets = doc["assets"].as<JsonArray>();
   String binUrl = "";
+  String wantedAsset = String(OTA_FIRMWARE_ASSET_NAME);
   for (JsonObject asset : assets) {
     String name = asset["name"] | "";
     String url = asset["browser_download_url"] | "";
-    if (url.endsWith(".bin") || name.endsWith(".bin")) {
+    if (name == wantedAsset) {
       binUrl = url;
       break;
     }
   }
 
   if (binUrl.length() == 0) {
-    deviceLog("OTA: newer release %s found but no .bin asset\n", tag.c_str());
+    deviceLog("OTA: newer release %s found but asset '%s' is missing\n", tag.c_str(), wantedAsset.c_str());
     return false;
   }
 
