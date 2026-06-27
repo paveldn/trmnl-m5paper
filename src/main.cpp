@@ -84,6 +84,11 @@
 #define FULL_REFRESH_INTERVAL  30    // Full quality refresh every N wakes
 #define LOW_BATTERY_VOLTAGE    3.4   // Below this voltage, show warning and shut down
 
+// OTA battery safety threshold (roughly ~20% for typical Li-ion curves)
+#ifndef OTA_MIN_BATTERY_VOLTAGE
+#define OTA_MIN_BATTERY_VOLTAGE 3.7
+#endif
+
 // ─────────────────────────── NVS Keys ───────────────────────────
 #define NVS_NAMESPACE          "trmnl"
 #define KEY_WIFI_SSID          "wifi_ssid"
@@ -1151,6 +1156,13 @@ void fetchAndDisplay(float batteryVoltage) {
   bool forceOta = forceOtaOnThisBoot;
   forceOtaOnThisBoot = false;  // Consume one-shot force for this boot
 
+  bool otaCheckAllowed = true;
+  bool otaExternalPower = isExternalPowerPresent();
+  if (batteryVoltage > 0.5 && batteryVoltage < OTA_MIN_BATTERY_VOLTAGE && !otaExternalPower) {
+    otaCheckAllowed = false;
+    deviceLog("OTA: skipped check due to low battery %.2fV < %.2fV\n", batteryVoltage, (double)OTA_MIN_BATTERY_VOLTAGE);
+  }
+
   // Update refresh rate from server
   if (newRefreshRate != refreshRate) {
     deviceLog("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
@@ -1158,18 +1170,20 @@ void fetchAndDisplay(float batteryVoltage) {
   }
 
   // ── OTA firmware update ──
-  if (updateFirmware && firmwareUrl && strlen(firmwareUrl) > 0) {
-    otaUrl = String(firmwareUrl);
-    otaVersion = "server";
-    if (forceOta) {
-      deviceLog("OTA: server OTA selected while force flag active\n");
-    }
-  } else {
-    String githubUrl;
-    String githubVersion;
-    if (checkGitHubReleaseForUpdate(githubUrl, githubVersion, forceOta)) {
-      otaUrl = githubUrl;
-      otaVersion = githubVersion;
+  if (otaCheckAllowed) {
+    if (updateFirmware && firmwareUrl && strlen(firmwareUrl) > 0) {
+      otaUrl = String(firmwareUrl);
+      otaVersion = "server";
+      if (forceOta) {
+        deviceLog("OTA: server OTA selected while force flag active\n");
+      }
+    } else {
+      String githubUrl;
+      String githubVersion;
+      if (checkGitHubReleaseForUpdate(githubUrl, githubVersion, forceOta)) {
+        otaUrl = githubUrl;
+        otaVersion = githubVersion;
+      }
     }
   }
 
