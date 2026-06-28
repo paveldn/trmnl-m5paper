@@ -104,6 +104,7 @@
 #define KEY_IMAGE_LASTMOD      "image_lastmod"
 #define KEY_OTA_LAST_CHECK     "ota_last_chk"
 #define KEY_OTA_LAST_ATTEMPT   "ota_last_try"
+#define KEY_OTA_BETA_MODE      "ota_beta"
 #define KEY_RTC_SET            "rtc_set"
 #define KEY_LOG_ID             "log_id"
 
@@ -118,6 +119,7 @@
 #endif
 
 #define OTA_GITHUB_API_URL "https://api.github.com/repos/" OTA_GITHUB_OWNER "/" OTA_GITHUB_REPO "/releases/latest"
+#define OTA_GITHUB_RELEASES_API_URL "https://api.github.com/repos/" OTA_GITHUB_OWNER "/" OTA_GITHUB_REPO "/releases"
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR int partialRefreshCount = 0;
@@ -137,6 +139,7 @@ String apiBaseUrl;
 String friendlyId;
 int refreshRate = DEFAULT_REFRESH_RATE;
 bool forceOtaOnThisBoot = false;
+bool otaBetaMode = false;
 
 // ─────────────────────────── Log Buffer ───────────────────────────
 #if defined(DEBUG_LOGS) || defined(ENABLE_SERVER_LOGS)
@@ -301,12 +304,15 @@ void wifiErrorSleep();
 void apiErrorSleep();
 void sendLogs();
 void showLowBatteryAndShutdown();
-bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force = false);
+bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force = false, bool includePrereleases = false);
 bool getCurrentEpoch(time_t& epochOut);
 bool isIntervalElapsed(const char* key, uint32_t intervalSec);
 void markIntervalNow(const char* key);
 bool parseVersionParts(const String& version, int& major, int& minor, int& patch);
 int compareVersions(const String& a, const String& b);
+String extractDeviceNameFromPayload(const JsonDocument& doc);
+bool isBetaName(const String& deviceName);
+void setOtaModeFromName(const String& deviceName);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SETUP — Main algorithm (runs on every wake from deep sleep)
@@ -478,6 +484,7 @@ void loadSettings() {
   apiBaseUrl = prefs.getString(KEY_API_URL, DEFAULT_API_BASE_URL);
   friendlyId = prefs.getString(KEY_FRIENDLY_ID, "");
   refreshRate = prefs.getInt(KEY_REFRESH_RATE, DEFAULT_REFRESH_RATE);
+  otaBetaMode = prefs.getBool(KEY_OTA_BETA_MODE, false);
   prefs.end();
 }
 
@@ -517,7 +524,96 @@ void clearAllSettings() {
   apiBaseUrl = DEFAULT_API_BASE_URL;
   friendlyId = "";
   refreshRate = DEFAULT_REFRESH_RATE;
+  otaBetaMode = false;
   savedChannel = 0;
+}
+
+String extractDeviceNameFromPayload(const JsonDocument& doc) {
+  JsonVariantConst name = doc["name"];
+  if (name.is<const char*>()) {
+    String value = name.as<const char*>();
+    value.trim();
+    if (value.length() > 0) return value;
+  }
+
+  JsonVariantConst deviceName = doc["device_name"];
+  if (deviceName.is<const char*>()) {
+    String value = deviceName.as<const char*>();
+    value.trim();
+    if (value.length() > 0) return value;
+  }
+
+  JsonVariantConst friendlyName = doc["friendly_name"];
+  if (friendlyName.is<const char*>()) {
+    String value = friendlyName.as<const char*>();
+    value.trim();
+    if (value.length() > 0) return value;
+  }
+
+  JsonVariantConst fid = doc["friendly_id"];
+  if (fid.is<const char*>()) {
+    String value = fid.as<const char*>();
+    value.trim();
+    if (value.length() > 0) return value;
+  }
+
+  JsonVariantConst nestedDeviceName = doc["device"]["name"];
+  if (nestedDeviceName.is<const char*>()) {
+    String value = nestedDeviceName.as<const char*>();
+    value.trim();
+    if (value.length() > 0) return value;
+  }
+
+  JsonVariantConst nestedFriendlyName = doc["device"]["friendly_name"];
+  if (nestedFriendlyName.is<const char*>()) {
+    String value = nestedFriendlyName.as<const char*>();
+    value.trim();
+    if (value.length() > 0) return value;
+  }
+
+  return "";
+}
+
+bool isBetaName(const String& deviceName) {
+  String normalized = deviceName;
+  normalized.trim();
+  while (normalized.endsWith(":")) {
+    normalized.remove(normalized.length() - 1, 1);
+    normalized.trim();
+  }
+
+  String lower = normalized;
+  lower.toLowerCase();
+  if (!lower.endsWith("beta")) {
+    return false;
+  }
+
+  int suffixStart = lower.length() - 4;
+  if (suffixStart <= 0) {
+    return true;
+  }
+
+  char before = lower[suffixStart - 1];
+  return !isAlphaNumeric(before);
+}
+
+void setOtaModeFromName(const String& deviceName) {
+  if (deviceName.length() == 0) return;
+
+  bool newBetaMode = isBetaName(deviceName);
+  if (newBetaMode == otaBetaMode) {
+    return;
+  }
+
+  deviceLog("OTA: mode switched to %s based on device name '%s'\n", newBetaMode ? "beta" : "stable", deviceName.c_str());
+  otaBetaMode = newBetaMode;
+
+  // Reset update cooldowns when switching channels so the new channel is checked immediately.
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBool(KEY_OTA_BETA_MODE, otaBetaMode);
+  prefs.remove(KEY_OTA_LAST_CHECK);
+  prefs.remove(KEY_OTA_LAST_ATTEMPT);
+  prefs.end();
 }
 
 bool getCurrentEpoch(time_t& epochOut) {
@@ -600,7 +696,7 @@ int compareVersions(const String& a, const String& b) {
   return 0;
 }
 
-bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force) {
+bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force, bool includePrereleases) {
   firmwareUrlOut = "";
   versionOut = "";
 
@@ -619,7 +715,7 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
   disableWiFiPS();
 
   HTTPClient http;
-  http.begin(OTA_GITHUB_API_URL);
+  http.begin(includePrereleases ? OTA_GITHUB_RELEASES_API_URL : OTA_GITHUB_API_URL);
   http.setTimeout(15000);
   http.addHeader("User-Agent", "trmnl-m5paper");
   http.addHeader("Accept", "application/vnd.github+json");
@@ -637,49 +733,147 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
   http.end();
   enableWiFiPS();
 
-  JsonDocument filter;
-  filter["tag_name"] = true;
-  JsonObject filterAsset = filter["assets"].to<JsonArray>().add<JsonObject>();
-  filterAsset["name"] = true;
-  filterAsset["browser_download_url"] = true;
-
-  JsonDocument doc;
-  if (deserializeJson(doc, payload, DeserializationOption::Filter(filter))) {
-    deviceLog("OTA: GitHub response parse error\n");
-    return false;
-  }
-
-  String tag = doc["tag_name"] | "";
-  if (tag.length() == 0) {
-    deviceLog("OTA: GitHub release missing tag_name\n");
-    return false;
-  }
-
-  if (compareVersions(tag, String(FW_VERSION)) <= 0) {
-    deviceLog("OTA: no newer release (current %s, latest %s)\n", FW_VERSION, tag.c_str());
-    return false;
-  }
-
-  JsonArray assets = doc["assets"].as<JsonArray>();
-  String binUrl = "";
   String wantedAsset = String(OTA_FIRMWARE_ASSET_NAME);
-  for (JsonObject asset : assets) {
-    String name = asset["name"] | "";
-    String url = asset["browser_download_url"] | "";
-    if (name == wantedAsset) {
-      binUrl = url;
-      break;
+  String selectedTag = "";
+  String selectedUrl = "";
+  bool selectedIsPrerelease = false;
+
+  if (!includePrereleases) {
+    JsonDocument filter;
+    filter["tag_name"] = true;
+    JsonObject filterAsset = filter["assets"].to<JsonArray>().add<JsonObject>();
+    filterAsset["name"] = true;
+    filterAsset["browser_download_url"] = true;
+
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, DeserializationOption::Filter(filter))) {
+      deviceLog("OTA: GitHub response parse error\n");
+      return false;
+    }
+
+    String tag = doc["tag_name"] | "";
+    if (tag.length() == 0) {
+      deviceLog("OTA: GitHub release missing tag_name\n");
+      return false;
+    }
+
+    int versionCmp = compareVersions(tag, String(FW_VERSION));
+    if (!force && versionCmp <= 0) {
+      deviceLog("OTA: no newer release (current %s, latest %s)\n", FW_VERSION, tag.c_str());
+      return false;
+    }
+    if (force && versionCmp <= 0) {
+      deviceLog("OTA: force mode active, using latest release %s even though current is %s\n", tag.c_str(), FW_VERSION);
+    }
+
+    JsonArray assets = doc["assets"].as<JsonArray>();
+    for (JsonObject asset : assets) {
+      String name = asset["name"] | "";
+      String url = asset["browser_download_url"] | "";
+      if (name == wantedAsset) {
+        selectedTag = tag;
+        selectedUrl = url;
+        selectedIsPrerelease = false;
+        break;
+      }
+    }
+  } else {
+    JsonDocument filter;
+    JsonObject filterRelease = filter.to<JsonArray>().add<JsonObject>();
+    filterRelease["tag_name"] = true;
+    filterRelease["prerelease"] = true;
+    filterRelease["draft"] = true;
+    JsonObject filterAsset = filterRelease["assets"].to<JsonArray>().add<JsonObject>();
+    filterAsset["name"] = true;
+    filterAsset["browser_download_url"] = true;
+
+    JsonDocument doc;
+    if (deserializeJson(doc, payload, DeserializationOption::Filter(filter))) {
+      deviceLog("OTA: GitHub releases response parse error\n");
+      return false;
+    }
+
+    JsonArray releases = doc.as<JsonArray>();
+    if (releases.isNull()) {
+      deviceLog("OTA: GitHub releases payload missing array\n");
+      return false;
+    }
+
+    String stableTag = "";
+    String stableUrl = "";
+    String prereleaseTag = "";
+    String prereleaseUrl = "";
+
+    for (JsonObject release : releases) {
+      bool isDraft = release["draft"] | false;
+      if (isDraft) continue;
+
+      String tag = release["tag_name"] | "";
+      if (tag.length() == 0) continue;
+
+      int versionCmp = compareVersions(tag, String(FW_VERSION));
+      if (!force && versionCmp <= 0) {
+        continue;
+      }
+
+      String assetUrl = "";
+      JsonArray assets = release["assets"].as<JsonArray>();
+      for (JsonObject asset : assets) {
+        String name = asset["name"] | "";
+        String url = asset["browser_download_url"] | "";
+        if (name == wantedAsset) {
+          assetUrl = url;
+          break;
+        }
+      }
+
+      if (assetUrl.length() == 0) {
+        continue;
+      }
+
+      bool isPrerelease = release["prerelease"] | false;
+      if (!isPrerelease && stableUrl.length() == 0) {
+        stableTag = tag;
+        stableUrl = assetUrl;
+      }
+      if (isPrerelease && prereleaseUrl.length() == 0) {
+        prereleaseTag = tag;
+        prereleaseUrl = assetUrl;
+      }
+
+      if (stableUrl.length() > 0 && prereleaseUrl.length() > 0) {
+        break;
+      }
+    }
+
+    if (stableUrl.length() > 0) {
+      selectedTag = stableTag;
+      selectedUrl = stableUrl;
+      selectedIsPrerelease = false;
+    } else if (prereleaseUrl.length() > 0) {
+      selectedTag = prereleaseTag;
+      selectedUrl = prereleaseUrl;
+      selectedIsPrerelease = true;
+    }
+
+    if (selectedTag.length() > 0 && force && compareVersions(selectedTag, String(FW_VERSION)) <= 0) {
+      deviceLog("OTA: force mode active, using latest %s %s even though current is %s\n",
+                selectedIsPrerelease ? "prerelease" : "release",
+                selectedTag.c_str(),
+                FW_VERSION);
     }
   }
 
-  if (binUrl.length() == 0) {
-    deviceLog("OTA: newer release %s found but asset '%s' is missing\n", tag.c_str(), wantedAsset.c_str());
+  if (selectedUrl.length() == 0) {
+    deviceLog("OTA: no suitable %s found with asset '%s'\n",
+              includePrereleases ? "release/prerelease" : "release",
+              wantedAsset.c_str());
     return false;
   }
 
-  firmwareUrlOut = binUrl;
-  versionOut = tag;
-  deviceLog("OTA: update available %s\n", tag.c_str());
+  firmwareUrlOut = selectedUrl;
+  versionOut = selectedTag;
+  deviceLog("OTA: update available %s%s\n", selectedTag.c_str(), selectedIsPrerelease ? " (prerelease)" : "");
   return true;
 }
 
@@ -937,14 +1131,19 @@ void registerDevice() {
   if (status == 200) {
     String key = doc["api_key"] | "";
     String fid = doc["friendly_id"] | "";
+    String deviceName = extractDeviceNameFromPayload(doc);
+    if (deviceName.length() == 0) {
+      deviceName = fid;
+    }
 
     if (key.length() > 0) {
       saveServerSettings(key, "");
       prefs.begin(NVS_NAMESPACE, false);
-      prefs.putString(KEY_FRIENDLY_ID, fid);
+      prefs.putString(KEY_FRIENDLY_ID, deviceName.length() > 0 ? deviceName : fid);
       prefs.putInt(KEY_API_RETRY_COUNT, 1);
       prefs.end();
-      friendlyId = fid;
+      friendlyId = deviceName.length() > 0 ? deviceName : fid;
+      setOtaModeFromName(friendlyId);
       deviceLog("Registered! API Key: %s, Friendly ID: %s\n", key.c_str(), fid.c_str());
     }
   } else if (status == 404) {
@@ -1109,6 +1308,18 @@ void fetchAndDisplay(float batteryVoltage) {
 
   int status = doc["status"] | -1;
 
+  String serverDeviceName = extractDeviceNameFromPayload(doc);
+  if (serverDeviceName.length() > 0) {
+    if (serverDeviceName != friendlyId) {
+      prefs.begin(NVS_NAMESPACE, false);
+      prefs.putString(KEY_FRIENDLY_ID, serverDeviceName);
+      prefs.end();
+      friendlyId = serverDeviceName;
+      deviceLog("Device name updated from server: %s\n", serverDeviceName.c_str());
+    }
+    setOtaModeFromName(serverDeviceName);
+  }
+
   // ── Handle reset_firmware ──
   bool resetFirmware = doc["reset_firmware"] | false;
   if (resetFirmware) {
@@ -1180,7 +1391,8 @@ void fetchAndDisplay(float batteryVoltage) {
     } else {
       String githubUrl;
       String githubVersion;
-      if (checkGitHubReleaseForUpdate(githubUrl, githubVersion, forceOta)) {
+      deviceLog("OTA: checking GitHub channel %s\n", otaBetaMode ? "beta" : "stable");
+      if (checkGitHubReleaseForUpdate(githubUrl, githubVersion, forceOta, otaBetaMode)) {
         otaUrl = githubUrl;
         otaVersion = githubVersion;
       }
