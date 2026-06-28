@@ -44,7 +44,9 @@
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #define DEVICE_MODEL        "m5paper"
+#ifndef FW_VERSION
 #define FW_VERSION          "2.5.0"
+#endif
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
 

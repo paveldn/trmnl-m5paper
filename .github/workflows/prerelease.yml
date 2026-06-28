@@ -35,14 +35,6 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      - name: Build
-        run: pio run
-
-      - name: Prepare Device Asset
-        run: |
-          mkdir -p dist
-          cp .pio/build/m5stack_paper/firmware.bin dist/m5paper.bin
-
       - name: Compute Prerelease Name
         id: naming
         shell: bash
@@ -72,12 +64,26 @@ jobs:
 
           tag_name="v${BASE_VERSION}-beta.${next}"
           release_name="v${BASE_VERSION} beta ${next}"
+          firmware_version="${BASE_VERSION}-beta.${next}"
 
           echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
           echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
+          echo "firmware_version=${firmware_version}" >> "$GITHUB_OUTPUT"
 
           echo "Using tag: ${tag_name}"
           echo "Using name: ${release_name}"
+          echo "Using FW_VERSION: ${firmware_version}"
+
+      - name: Build
+        env:
+          FW_VERSION_VALUE: ${{ steps.naming.outputs.firmware_version }}
+        run: |
+          pio run --project-option "build_flags=-DBOARD_HAS_PSRAM -DENABLE_SERVER_LOGS -DFW_VERSION=\"$FW_VERSION_VALUE\""
+
+      - name: Prepare Device Asset
+        run: |
+          mkdir -p dist
+          cp .pio/build/m5stack_paper/firmware.bin dist/m5paper.bin
 
       - name: Create Prerelease
         uses: softprops/action-gh-release@v2
