@@ -88,6 +88,41 @@ Safety rules:
 - OTA attempt cooldown: 24h.
 - OTA is skipped on low battery unless external power is present.
 
+### Beta OTA Channel (Name-Driven)
+
+The device can automatically switch OTA channel based on the name returned by the server.
+
+- If the server-provided device name ends with Beta (case-insensitive), the device switches to beta OTA channel.
+- If Beta is removed from the end of the name, the device switches back to stable OTA channel.
+- Examples that enable beta channel: TRMNL Beta, TRMNL beta, TRMNL Beta:
+
+Where the name comes from:
+- The firmware reads name fields from setup/display API payloads and updates internal OTA mode.
+
+Channel behavior:
+- Stable channel: checks stable releases only (releases/latest).
+- Beta channel: checks both releases and prereleases, with priority for stable releases when both are available.
+
+On channel switch:
+- OTA cooldown state is reset, so update checks/attempts can run again immediately for the new channel.
+
+### Publishing Beta Firmware (GitHub Actions)
+
+Use the manual workflow:
+- .github/workflows/prerelease.yml
+
+How it works:
+- Input base version (for example 2.6.0).
+- Workflow scans existing tags matching v2.6.0-beta.N.
+- It picks the next available N automatically and creates a GitHub prerelease.
+
+Generated naming:
+- Tag: v2.6.0-beta.1, v2.6.0-beta.2, ...
+- Release title: v2.6.0 beta 1, v2.6.0 beta 2, ...
+
+Published asset:
+- dist/m5paper.bin (used by OTA asset selection)
+
 ### Clone-Aware Release Source
 
 At build time, PlatformIO runs a pre-script that reads git remote origin and injects:

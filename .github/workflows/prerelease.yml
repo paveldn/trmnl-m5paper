@@ -1,0 +1,90 @@
+name: Prerelease
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Base version (e.g. 2.6.0)"
+        required: true
+
+concurrency:
+  group: prerelease-${{ github.event.inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  prerelease:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build
+        run: pio run
+
+      - name: Prepare Device Asset
+        run: |
+          mkdir -p dist
+          cp .pio/build/m5stack_paper/firmware.bin dist/m5paper.bin
+
+      - name: Compute Prerelease Name
+        id: naming
+        shell: bash
+        env:
+          BASE_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$BASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version '$BASE_VERSION'. Expected format: x.y.z" >&2
+            exit 1
+          fi
+
+          mapfile -t nums < <(
+            git ls-remote --tags --refs origin "refs/tags/v${BASE_VERSION}-beta.*" \
+              | sed -E "s#.*refs/tags/v${BASE_VERSION}-beta\\.([0-9]+)$#\\1#" \
+              | awk '/^[0-9]+$/' \
+              | sort -n
+          )
+
+          next=1
+          for n in "${nums[@]:-}"; do
+            if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= next )); then
+              next=$((n + 1))
+            fi
+          done
+
+          tag_name="v${BASE_VERSION}-beta.${next}"
+          release_name="v${BASE_VERSION} beta ${next}"
+
+          echo "tag_name=${tag_name}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
+
+          echo "Using tag: ${tag_name}"
+          echo "Using name: ${release_name}"
+
+      - name: Create Prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.naming.outputs.tag_name }}
+          name: ${{ steps.naming.outputs.release_name }}
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            dist/m5paper.bin

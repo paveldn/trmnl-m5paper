@@ -804,16 +804,45 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
     String prereleaseTag = "";
     String prereleaseUrl = "";
 
+    String currentTag = String(FW_VERSION);
+    currentTag.trim();
+    if (currentTag.startsWith("v") || currentTag.startsWith("V")) {
+      currentTag.remove(0, 1);
+    }
+    bool currentIsPrerelease = (currentTag.indexOf('-') >= 0);
+
     for (JsonObject release : releases) {
       bool isDraft = release["draft"] | false;
       if (isDraft) continue;
 
+      bool isPrerelease = release["prerelease"] | false;
+
       String tag = release["tag_name"] | "";
       if (tag.length() == 0) continue;
 
+      String normalizedTag = tag;
+      normalizedTag.trim();
+      if (normalizedTag.startsWith("v") || normalizedTag.startsWith("V")) {
+        normalizedTag.remove(0, 1);
+      }
+
       int versionCmp = compareVersions(tag, String(FW_VERSION));
-      if (!force && versionCmp <= 0) {
-        continue;
+      if (!force) {
+        // Skip exact same tag to avoid redundant OTA attempts.
+        if (normalizedTag.equalsIgnoreCase(currentTag)) {
+          continue;
+        }
+
+        // Never move backwards.
+        if (versionCmp < 0) {
+          continue;
+        }
+
+        // In beta mode, allow equal base version updates, but only from
+        // prerelease -> stable (not stable -> prerelease).
+        if (versionCmp == 0 && isPrerelease && !currentIsPrerelease) {
+          continue;
+        }
       }
 
       String assetUrl = "";
@@ -831,7 +860,6 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
         continue;
       }
 
-      bool isPrerelease = release["prerelease"] | false;
       if (!isPrerelease && stableUrl.length() == 0) {
         stableTag = tag;
         stableUrl = assetUrl;
