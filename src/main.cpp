@@ -20,7 +20,7 @@
  * 
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
  * 
- * @version 2.5.0
+ * @version 2.6.0
  * @see https://docs.trmnl.com/go/diy/byod
  */
 
@@ -45,7 +45,7 @@
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #define DEVICE_MODEL        "m5paper"
 #ifndef FW_VERSION
-#define FW_VERSION          "2.5.0"
+#define FW_VERSION          "2.6.0"
 #endif
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
@@ -411,7 +411,7 @@ void setup() {
   }
 
   // ── Low battery protection (averaged read to avoid ADC transients) ──
-  float bootVoltage = readBatteryAvg(4, 50);
+  float bootVoltage = getBatteryVoltage();
   bool externalPower = isExternalPowerPresent();
   if (bootVoltage > 0.5 && bootVoltage < LOW_BATTERY_VOLTAGE && !externalPower) {
     deviceLog("LOW BATTERY: %.2fV < %.1fV threshold\n", bootVoltage, LOW_BATTERY_VOLTAGE);
@@ -1192,21 +1192,43 @@ void registerDevice() {
 //  BATTERY
 // ═══════════════════════════════════════════════════════════════════════════════
 float getBatteryVoltage() {
-  float voltage = M5.Power.getBatteryVoltage() / 1000.0;
-  int level = M5.Power.getBatteryLevel();
-  deviceLog("Bat: %d%% %.2fV\n", level, voltage);
+  // Use a trimmed average to reduce ADC spikes and e-ink/WiFi transients.
+  float voltage = readBatteryAvg(8, 30);
+
+  // On battery-only operation, report a slightly conservative value.
+  // This better reflects in-load behavior and avoids optimistic % on dashboards.
+  bool externalPower = isExternalPowerPresent();
+  if (!externalPower && voltage > 0.1f) {
+    voltage -= 0.06f;
+  }
+
+  deviceLog("Bat: %.2fV (external=%d)\n", voltage, externalPower ? 1 : 0);
   return voltage;
 }
 
 float readBatteryAvg(int samples, int delayMs) {
   if (samples <= 0) samples = 1;
+  if (samples > 32) samples = 32;
+
   float sum = 0.0;
+  float minV = 100.0f;
+  float maxV = 0.0f;
+
   for (int i = 0; i < samples; ++i) {
-    sum += M5.Power.getBatteryVoltage() / 1000.0;
+    float v = M5.Power.getBatteryVoltage() / 1000.0f;
+    sum += v;
+    if (v < minV) minV = v;
+    if (v > maxV) maxV = v;
     if (i < samples - 1) delay(delayMs);
   }
-  float avg = sum / samples;
-  deviceLog("Bat(avg): %.2fV samples=%d\n", avg, samples);
+
+  float avg = sum / (float)samples;
+  // Trim one min and one max sample when enough samples are available.
+  if (samples >= 5) {
+    avg = (sum - minV - maxV) / (float)(samples - 2);
+  }
+
+  deviceLog("Bat(avg): %.2fV min=%.2f max=%.2f samples=%d\n", avg, minV, maxV, samples);
   return avg;
 }
 
@@ -1215,14 +1237,16 @@ float readBatteryAvg(int samples, int delayMs) {
 // ═══════════════════════════════════════════════════════════════════════════════
 bool isExternalPowerPresent() {
   int16_t vbus = M5.Power.getVBUSVoltage();
-  auto charging = M5.Power.isCharging();
-  bool present = vbus > 4000 || charging == m5::Power_Class::is_charging_t::is_charging;
-  deviceLog("Power: VBUS=%dmV charging=%d external=%d\n", vbus, (int)charging, present ? 1 : 0);
+  // For M5Paper, isCharging() is not reliable in M5Unified.
+  bool present = vbus > 4000;
+  deviceLog("Power: VBUS=%dmV external=%d\n", vbus, present ? 1 : 0);
   return present;
 }
 
 bool isBatteryCharging() {
-  return M5.Power.isCharging() == m5::Power_Class::is_charging_t::is_charging;
+  // M5Paper does not provide a reliable charging-state signal via M5Unified.
+  // Treat USB/VBUS presence as charging for upstream telemetry compatibility.
+  return isExternalPowerPresent();
 }
 
 String getWifiBand() {
@@ -1814,7 +1838,7 @@ void showLowBatteryAndShutdown() {
   canvas.drawString("LOW BATTERY", cx, cy + bh/2 + 50);
 
   canvas.setFont(&fonts::FreeSans9pt7b);
-  float v = M5.Power.getBatteryVoltage() / 1000.0;
+  float v = readBatteryAvg(6, 20);
   canvas.drawString(String(v, 2) + "V - Connect USB to charge", cx, cy + bh/2 + 90);
 
   canvas.pushSprite(0, 0);
