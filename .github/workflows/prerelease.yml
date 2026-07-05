@@ -78,6 +78,34 @@ jobs:
         run: |
           pio run
 
+      - name: Generate Prerelease Notes
+        id: notes
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.naming.outputs.tag_name }}
+          RELEASE_NAME: ${{ steps.naming.outputs.release_name }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+
+          previous_tag="$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$' \
+            | grep -vx "$RELEASE_TAG" \
+            | head -n 1)"
+
+          if [[ -z "$previous_tag" ]]; then
+            echo "No previous tag found; GitHub will generate notes from the repository history."
+          else
+            echo "Using previous tag: $previous_tag"
+          fi
+
+          python scripts/generate_release_notes.py \
+            --current-tag "$RELEASE_TAG" \
+            --previous-tag "$previous_tag" \
+            --output release-notes.md \
+            --title "$RELEASE_NAME"
+
       - name: Prepare Device Asset
         run: |
           mkdir -p dist
@@ -89,6 +117,6 @@ jobs:
           tag_name: ${{ steps.naming.outputs.tag_name }}
           name: ${{ steps.naming.outputs.release_name }}
           prerelease: true
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             dist/m5paper.bin

@@ -14,6 +14,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/cache@v4
         with:
@@ -35,6 +37,33 @@ jobs:
         run: |
           pio run
 
+      - name: Generate Release Notes
+        id: notes
+        shell: bash
+        env:
+          RELEASE_TAG: v${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+
+          git fetch --force --tags origin
+
+          previous_tag="$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | grep -vx "$RELEASE_TAG" \
+            | head -n 1)"
+
+          if [[ -z "$previous_tag" ]]; then
+            echo "No previous stable release tag found; GitHub will generate notes from the repository history."
+          else
+            echo "Using previous stable release tag: $previous_tag"
+          fi
+
+          python scripts/generate_release_notes.py \
+            --current-tag "$RELEASE_TAG" \
+            --previous-tag "$previous_tag" \
+            --output release-notes.md \
+            --title "$RELEASE_TAG"
+
       - name: Prepare Device Asset
         run: |
           mkdir -p dist
@@ -45,6 +74,6 @@ jobs:
         with:
           tag_name: v${{ github.event.inputs.version }}
           name: v${{ github.event.inputs.version }}
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             dist/m5paper.bin
