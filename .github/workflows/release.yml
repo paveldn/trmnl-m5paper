@@ -33,7 +33,7 @@ jobs:
         env:
           FW_VERSION_VALUE: ${{ github.event.inputs.version }}
         run: |
-          pio run --project-option "build_flags=-DBOARD_HAS_PSRAM -DENABLE_SERVER_LOGS -DFW_VERSION=\"$FW_VERSION_VALUE\""
+          pio run
 
       - name: Prepare Device Asset
         run: |

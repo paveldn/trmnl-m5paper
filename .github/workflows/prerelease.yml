@@ -48,19 +48,17 @@ jobs:
             exit 1
           fi
 
-          mapfile -t nums < <(
-            git ls-remote --tags --refs origin "refs/tags/v${BASE_VERSION}-beta.*" \
-              | sed -E "s#.*refs/tags/v${BASE_VERSION}-beta\\.([0-9]+)$#\\1#" \
-              | awk '/^[0-9]+$/' \
-              | sort -n
-          )
-
           next=1
-          for n in "${nums[@]:-}"; do
-            if [[ "$n" =~ ^[0-9]+$ ]] && (( n >= next )); then
-              next=$((n + 1))
+          escaped_base="${BASE_VERSION//./\\.}"
+          while read -r _ ref; do
+            tag="${ref#refs/tags/}"
+            if [[ "$tag" =~ ^v${escaped_base}-beta\.([0-9]+)$ ]]; then
+              n="${BASH_REMATCH[1]}"
+              if (( n >= next )); then
+                next=$((n + 1))
+              fi
             fi
-          done
+          done < <(git ls-remote --tags --refs origin "refs/tags/v${BASE_VERSION}-beta.*")
 
           tag_name="v${BASE_VERSION}-beta.${next}"
           release_name="v${BASE_VERSION} beta ${next}"
@@ -78,7 +76,7 @@ jobs:
         env:
           FW_VERSION_VALUE: ${{ steps.naming.outputs.firmware_version }}
         run: |
-          pio run --project-option "build_flags=-DBOARD_HAS_PSRAM -DENABLE_SERVER_LOGS -DFW_VERSION=\"$FW_VERSION_VALUE\""
+          pio run
 
       - name: Prepare Device Asset
         run: |
