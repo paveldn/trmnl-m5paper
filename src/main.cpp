@@ -41,6 +41,8 @@
 
 #include "captive_portal.h"
 #include "api_helpers.h"
+#include "display.h"
+#include "preferences_persistence.h"
 
 // ─────────────────────────── Hardware Defines ───────────────────────────
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
@@ -480,77 +482,6 @@ void loop() {
   // Should be unreachable, but restart if deep sleep setup ever returns.
   delay(1000);
   ESP.restart();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  SETTINGS MANAGEMENT
-// ═══════════════════════════════════════════════════════════════════════════════
-void loadSettings() {
-  prefs.begin(NVS_NAMESPACE, true);
-  configuredSSID = prefs.getString(KEY_WIFI_SSID, "");
-  configuredPass = prefs.getString(KEY_WIFI_PASS, "");
-  apiKey = prefs.getString(KEY_API_KEY, "");
-  apiBaseUrl = prefs.getString(KEY_API_URL, DEFAULT_API_BASE_URL);
-  friendlyId = prefs.getString(KEY_FRIENDLY_ID, "");
-  refreshRate = prefs.getInt(KEY_REFRESH_RATE, DEFAULT_REFRESH_RATE);
-  otaBetaMode = prefs.getBool(KEY_OTA_BETA_MODE, false);
-  prefs.end();
-}
-
-void saveWiFiSettings(const String& ssid, const String& pass) {
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putString(KEY_WIFI_SSID, ssid);
-  prefs.putString(KEY_WIFI_PASS, pass);
-  prefs.end();
-  configuredSSID = ssid;
-  configuredPass = pass;
-  savedChannel = 0;  // Invalidate fast reconnect cache
-}
-
-void saveServerSettings(const String& key, const String& url) {
-  prefs.begin(NVS_NAMESPACE, false);
-  if (key.length() > 0) prefs.putString(KEY_API_KEY, key);
-  if (url.length() > 0) prefs.putString(KEY_API_URL, url);
-  prefs.end();
-  if (key.length() > 0) apiKey = key;
-  if (url.length() > 0) apiBaseUrl = url;
-}
-
-void saveOtaBetaMode(bool enabled) {
-  if (enabled == otaBetaMode) {
-    return;
-  }
-
-  otaBetaMode = enabled;
-  deviceLog("OTA: mode switched to %s from settings\n", otaBetaMode ? "beta" : "stable");
-
-  // Reset update cooldowns when switching channels so checks run immediately.
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putBool(KEY_OTA_BETA_MODE, otaBetaMode);
-  prefs.remove(KEY_OTA_LAST_CHECK);
-  prefs.remove(KEY_OTA_LAST_ATTEMPT);
-  prefs.end();
-}
-
-void saveRefreshRate(int rate) {
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putInt(KEY_REFRESH_RATE, rate);
-  prefs.end();
-  refreshRate = rate;
-}
-
-void clearAllSettings() {
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.clear();
-  prefs.end();
-  configuredSSID = "";
-  configuredPass = "";
-  apiKey = "";
-  apiBaseUrl = DEFAULT_API_BASE_URL;
-  friendlyId = "";
-  refreshRate = DEFAULT_REFRESH_RATE;
-  otaBetaMode = false;
-  savedChannel = 0;
 }
 
 bool getCurrentEpoch(time_t& epochOut) {
@@ -1797,82 +1728,6 @@ bool performOTA(const char* firmwareUrl) {
   delay(1000);
   ESP.restart();
   return true;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  DISPLAY HELPERS
-// ═══════════════════════════════════════════════════════════════════════════════
-void showLoadingScreen() {
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
-  canvas.fillSprite(TFT_WHITE);
-  canvas.setTextColor(TFT_BLACK);
-  canvas.setTextDatum(MC_DATUM);
-  canvas.setFont(&fonts::FreeSansBold12pt7b);
-  canvas.drawString("TRMNL", DISPLAY_WIDTH / 2, DISPLAY_HEIGHT / 2 - 20);
-  canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("Loading...", DISPLAY_WIDTH / 2, DISPLAY_HEIGHT / 2 + 30);
-  canvas.pushSprite(0, 0);
-  M5.Display.display();
-  partialRefreshCount = 0;  // Reset since we did a full refresh
-}
-
-void showSetupScreen(const String& message) {
-  invalidateImageCache("setup_screen");
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
-  canvas.fillSprite(TFT_WHITE);
-  canvas.setTextColor(TFT_BLACK);
-  canvas.setTextDatum(MC_DATUM);
-  canvas.setFont(&fonts::FreeSansBold12pt7b);
-
-  canvas.drawString("M5Paper TRMNL", DISPLAY_WIDTH / 2, 60);
-
-  canvas.setFont(&fonts::FreeSans12pt7b);
-  int y = 180;
-  int start = 0;
-  String msg = message;
-  while (start < (int)msg.length()) {
-    int nl = msg.indexOf('\n', start);
-    if (nl < 0) nl = msg.length();
-    String line = msg.substring(start, nl);
-    canvas.drawString(line, DISPLAY_WIDTH / 2, y);
-    y += 36;
-    start = nl + 1;
-  }
-
-  canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("FW " FW_VERSION, DISPLAY_WIDTH / 2, DISPLAY_HEIGHT - 40);
-
-  canvas.pushSprite(0, 0);
-  M5.Display.display();
-}
-
-void showErrorScreen(const String& message) {
-  invalidateImageCache("error_screen");
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
-  canvas.fillSprite(TFT_WHITE);
-  canvas.setTextColor(TFT_BLACK);
-  canvas.setTextDatum(MC_DATUM);
-  canvas.setFont(&fonts::FreeSansBold12pt7b);
-  canvas.drawString("Error", DISPLAY_WIDTH / 2, 80);
-
-  canvas.setFont(&fonts::FreeSans12pt7b);
-  int y = 200;
-  int start = 0;
-  String msg = message;
-  while (start < (int)msg.length()) {
-    int nl = msg.indexOf('\n', start);
-    if (nl < 0) nl = msg.length();
-    String line = msg.substring(start, nl);
-    canvas.drawString(line, DISPLAY_WIDTH / 2, y);
-    y += 36;
-    start = nl + 1;
-  }
-
-  canvas.setFont(&fonts::FreeSans9pt7b);
-  canvas.drawString("FW " FW_VERSION, DISPLAY_WIDTH / 2, DISPLAY_HEIGHT - 40);
-
-  canvas.pushSprite(0, 0);
-  M5.Display.display();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
