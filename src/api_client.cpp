@@ -107,6 +107,7 @@ void sendLogs() {
 
   prefs.begin(NVS_NAMESPACE, false);
   uint32_t logId = prefs.getUInt(KEY_LOG_ID, 1);
+  int apiRetryCount = prefs.getInt(KEY_API_RETRY_COUNT, 1);
   prefs.putUInt(KEY_LOG_ID, logId + 1);
   prefs.end();
 
@@ -123,7 +124,9 @@ void sendLogs() {
 
   entry["created_at"] = (uint32_t)time(nullptr);
   entry["id"] = logId;
+  entry["level"] = "debug";
   entry["message"] = msg;
+  entry["retry"] = apiRetryCount;
   entry["source_line"] = 0;
   entry["source_path"] = "main.cpp";
 
