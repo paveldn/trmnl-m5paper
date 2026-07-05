@@ -41,8 +41,10 @@
 
 #include "captive_portal.h"
 #include "api_helpers.h"
+#include "api_client.h"
 #include "display.h"
 #include "preferences_persistence.h"
+#include "wifi_network.h"
 
 // ─────────────────────────── Hardware Defines ───────────────────────────
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
@@ -174,7 +176,7 @@ void showSetupScreen(const String& message);
 
 // Try to initialize RTC from an HTTP Date header (RFC1123). Only sets time
 // if current system time looks uninitialized (before 2020) or if force=true.
-static bool tryInitRtcFromHttpDate(const String &dateHeader, bool force = false) {
+bool tryInitRtcFromHttpDate(const String &dateHeader, bool force) {
   if (dateHeader.length() == 0) return false;
 
   time_t now = time(nullptr);
@@ -233,7 +235,7 @@ static bool tryInitRtcFromHttpDate(const String &dateHeader, bool force = false)
 
 // Check for a runtime long-press on the wake button. Only blocks if the
 // button is actually held. 5s = WiFi clear, 15s = factory reset.
-static void checkRuntimeReset() {
+void checkRuntimeReset() {
   pinMode(M5PAPER_WAKE_BUTTON, INPUT);
   if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
     deviceLog("Runtime button press detected\n");
@@ -269,11 +271,11 @@ static void checkRuntimeReset() {
 }
 
 // WiFi power-save helpers: disable PS during transfers, enable otherwise
-static inline void disableWiFiPS() {
+void disableWiFiPS() {
   esp_wifi_set_ps(WIFI_PS_NONE);
 }
 
-static inline void enableWiFiPS() {
+void enableWiFiPS() {
   esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
 }
 
@@ -285,34 +287,18 @@ const char* DEFAULT_API_BASE_URL_STR = DEFAULT_API_BASE_URL;
 const char* UPDATE_SOURCE_STR = "m5paper";
 
 // ─────────────────────────── Forward Declarations ───────────────────────────
-void loadSettings();
-void saveWiFiSettings(const String& ssid, const String& pass);
 float readBatteryAvg(int samples = 6, int delayMs = 50);
-void saveServerSettings(const String& key, const String& url);
-void saveOtaBetaMode(bool enabled);
-void clearAllSettings();
-bool connectWiFi();
 float getBatteryVoltage();
 uint8_t batteryPercent(float voltage);
 bool isExternalPowerPresent();
 bool isBatteryCharging();
 bool detectExternalPower(int16_t* vbusAvgOut = nullptr, int16_t* vbusMaxOut = nullptr);
 String getWifiBand();
-static String wifiStatusString(wl_status_t status);
-static String wakeReasonString(esp_sleep_wakeup_cause_t reason);
-void fetchAndDisplay(float batteryVoltage);
 void displayImage(const char* imageUrl);
 bool downloadAndDisplayImage(const char* url);
-void registerDevice();
 void goToDeepSleep(int seconds);
-void showSetupScreen(const String& message);
-void showErrorScreen(const String& message);
-void showLoadingScreen();
 void invalidateImageCache(const char* reason = nullptr);
 bool performOTA(const char* firmwareUrl);
-void wifiErrorSleep();
-void apiErrorSleep();
-void sendLogs();
 void showLowBatteryAndShutdown();
 bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force = false, bool includePrereleases = false);
 bool getCurrentEpoch(time_t& epochOut);
@@ -858,284 +844,6 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
 // ═══════════════════════════════════════════════════════════════════════════════
 //  WIFI CONNECTION
 // ═══════════════════════════════════════════════════════════════════════════════
-bool connectWiFi() {
-  deviceLog("WiFi: %s\n", configuredSSID.c_str());
-
-  WiFi.persistent(false);  // Don't write credentials to flash on every boot
-  WiFi.mode(WIFI_STA);
-
-  bool fastConnect = (savedChannel != 0 && configuredPass.length() > 0);
-  bool connected = false;
-
-  if (fastConnect) {
-    deviceLog("Fast reconnect ch:%d\n", savedChannel);
-    WiFi.begin(configuredSSID.c_str(), configuredPass.c_str(), savedChannel, savedBSSID, true);
-
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start <= 5000) {
-      delay(250);
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-      connected = true;
-    } else {
-      deviceLog("Fast reconnect failed (ch:%d), resetting cache\n", savedChannel);
-      savedChannel = 0;
-      memset(savedBSSID, 0, 6);
-      WiFi.disconnect(true);
-      delay(10);
-      fastConnect = false;
-    }
-  }
-
-  if (!connected) {
-    deviceLog("WiFi: full scan connect\n");
-    if (configuredPass.length() > 0) {
-      WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
-    } else {
-      WiFi.begin(configuredSSID.c_str());
-    }
-
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED) {
-      if (millis() - start > WIFI_CONNECT_TIMEOUT) {
-        deviceLog("WiFi FAILED (timeout %dms)\n", WIFI_CONNECT_TIMEOUT);
-        WiFi.disconnect(true);
-        WiFi.mode(WIFI_OFF);
-        return false;
-      }
-      delay(250);
-    }
-  }
-
-  // Save channel + BSSID for fast reconnect on next wake
-  savedChannel = WiFi.channel();
-  memcpy(savedBSSID, WiFi.BSSID(), 6);
-
-  deviceLog("OK IP:%s RSSI:%d ch:%d %s\n",
-                WiFi.localIP().toString().c_str(), WiFi.RSSI(),
-                savedChannel, fastConnect ? "(fast)" : "(scan)");
-
-  // Enable WiFi power-save mode to reduce idle radio current
-  enableWiFiPS();
-
-  // Report previous WiFi failures to server
-  if (wifiFailCount > 0) {
-    deviceLog("WiFi: recovered after %d failed attempt(s)\n", wifiFailCount);
-    wifiFailCount = 0;
-  }
-
-  return true;
-}
-
-// WiFi error sleep after failed connection attempts
-void wifiErrorSleep() {
-  wifiFailCount++;
-
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
-  prefs.end();
-
-  deviceLog("WiFi unreachable after fast reconnect and full scan - sleeping %ds\n", refreshRate);
-  showErrorScreen("Can't connect to WiFi\n" + configuredSSID + "\n\nRetrying in " + String(refreshRate) + "s");
-  checkRuntimeReset();
-  goToDeepSleep(refreshRate);
-}
-
-// API error sleep with exponential backoff (15s, 30s, 60s then normal rate)
-void apiErrorSleep() {
-  prefs.begin(NVS_NAMESPACE, false);
-  int retryCount = prefs.getInt(KEY_API_RETRY_COUNT, 1);
-
-  int sleepTime;
-  switch (retryCount) {
-    case 1: sleepTime = API_RETRY_1; break;
-    case 2: sleepTime = API_RETRY_2; break;
-    case 3: sleepTime = API_RETRY_3; break;
-    default:
-      // Max retries — fall back to normal refresh rate
-      prefs.putInt(KEY_API_RETRY_COUNT, 1);
-      prefs.end();
-      deviceLog("API max retries — sleeping normal rate\n");
-      goToDeepSleep(refreshRate);
-      return;
-  }
-
-  deviceLog("API retry #%d, sleeping %ds\n", retryCount, sleepTime);
-  prefs.putInt(KEY_API_RETRY_COUNT, retryCount + 1);
-  prefs.end();
-  checkRuntimeReset();
-  goToDeepSleep(sleepTime);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  LOG SUBMISSION (POST /api/log)
-// ═══════════════════════════════════════════════════════════════════════════════
-void sendLogs() {
-#ifndef ENABLE_SERVER_LOGS
-  return;
-#else
-  // Build a message from debug buffer if present, otherwise synthesize minimal metadata
-  String msg = "";
-#ifdef DEBUG_LOGS
-  Serial.printf("[Log] sendLogs called: bufLen=%d baseUrl='%s' wifi=%d\n",
-    logBuffer.length(), apiBaseUrl.c_str(), WiFi.status());
-#endif
-  if (logBuffer.length() > 0) msg = logBuffer;
-
-  // If no debug buffer, synthesize a short message with device metadata
-  if (msg.length() == 0) {
-    prefs.begin(NVS_NAMESPACE, true);
-    int rtc = prefs.getInt(KEY_RTC_SET, 0);
-    prefs.end();
-    msg = String("auto-log: fw=") + String(FW_VERSION_STR) + ", mac=" + WiFi.macAddress() + ", fid=" + friendlyId + ", rtc=" + String(rtc);
-  }
-
-  float batV = getBatteryVoltage();
-  if (batV > 0.5 && batV < LOW_BATTERY_VOLTAGE && !isExternalPowerPresent()) {
-#ifdef DEBUG_LOGS
-    Serial.println("[Log] SKIP: low battery, deferring logs");
-#endif
-    return;
-  }
-
-  prefs.begin(NVS_NAMESPACE, false);
-  uint32_t logId = prefs.getUInt(KEY_LOG_ID, 1);
-  prefs.putUInt(KEY_LOG_ID, logId + 1);
-  prefs.end();
-
-  disableWiFiPS();
-  HTTPClient http;
-  String url = apiBaseUrl + "/api/log";
-  http.begin(url);
-  http.setTimeout(5000);
-  addLogHeaders(http, WiFi.macAddress(), apiKey);
-
-  JsonDocument doc;
-  JsonArray logs = doc["logs"].to<JsonArray>();
-  JsonObject entry = logs.add<JsonObject>();
-
-  entry["created_at"] = (uint32_t)time(nullptr);
-  entry["id"] = logId;
-  entry["message"] = msg;
-  entry["source_line"] = 0;
-  entry["source_path"] = "main.cpp";
-
-  entry["wifi_signal"] = WiFi.RSSI();
-  entry["wifi_status"] = wifiStatusString(WiFi.status());
-  entry["refresh_rate"] = refreshRate;
-  entry["sleep_duration"] = lastWakeTime;
-  entry["firmware_version"] = String(FW_VERSION_STR);
-  entry["special_function"] = "none";
-  entry["battery_voltage"] = batV;
-  entry["wake_reason"] = wakeReasonString(esp_sleep_get_wakeup_cause());
-  entry["free_heap_size"] = ESP.getFreeHeap();
-  entry["max_alloc_size"] = ESP.getMaxAllocHeap();
-
-  String payload;
-  serializeJson(doc, payload);
-
-#ifdef DEBUG_LOGS
-  Serial.printf("[Log] POST %s (%d bytes payload)\n", url.c_str(), payload.length());
-#endif
-
-  int code = http.POST(payload);
-  String response = http.getString();
-#ifdef DEBUG_LOGS
-  Serial.printf("[Log] Response: %d - %s\n", code, response.c_str());
-#endif
-  http.end();
-
-  // Re-enable power-save after network activity
-  enableWiFiPS();
-
-#ifdef DEBUG_LOGS
-  // Clear debug buffer only on success
-  if (code >= 200 && code < 300) {
-    logBuffer = "";
-  }
-#endif
-
-#ifndef DEBUG_LOGS
-  if (code >= 200 && code < 300) {
-    logBuffer = "";
-  }
-#endif
-#endif
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  DEVICE REGISTRATION (/api/setup)
-// ═══════════════════════════════════════════════════════════════════════════════
-void registerDevice() {
-  deviceLog("GET /api/setup...\n");
-  disableWiFiPS();
-
-  HTTPClient http;
-  String url = apiBaseUrl + "/api/setup";
-  http.begin(url);
-  http.setTimeout(15000);
-  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  addSetupHeaders(http, WiFi.macAddress(), FW_VERSION_STR, DEVICE_MODEL);
-
-  int code = http.GET();
-  if (code < 200 || code >= 300) {
-    deviceLog("Setup failed, HTTP %d\n", code);
-    http.end();
-    showErrorScreen("Setup failed\nHTTP " + String(code) + "\n" + apiBaseUrl);
-    enableWiFiPS();
-    apiErrorSleep();
-    return;
-  }
-
-  // Try to initialize RTC from server Date header if clock is unset
-  tryInitRtcFromHttpDate(http.header("Date"));
-
-  String payload = http.getString();
-  http.end();
-
-  enableWiFiPS();
-
-  JsonDocument doc;
-  if (deserializeJson(doc, payload)) {
-    deviceLog("Setup: JSON parse error\n");
-    showErrorScreen("Setup: bad response");
-    apiErrorSleep();
-    return;
-  }
-
-  int status = doc["status"] | 404;
-
-  if (status == 200) {
-    String key = doc["api_key"] | "";
-    String fid = doc["friendly_id"] | "";
-    if (fid.length() > 0) {
-      deviceLog("Friendly ID detected: %s\n", fid.c_str());
-    } else {
-      deviceLog("No friendly ID detected\n");
-    }
-
-    if (key.length() > 0) {
-      saveServerSettings(key, "");
-      prefs.begin(NVS_NAMESPACE, false);
-      prefs.putString(KEY_FRIENDLY_ID, fid);
-      prefs.putInt(KEY_API_RETRY_COUNT, 1);
-      prefs.end();
-      friendlyId = fid;
-      deviceLog("Registered! API Key: %s, Friendly ID: %s\n", key.c_str(), fid.c_str());
-    }
-  } else if (status == 404) {
-    // MAC not registered on server
-    deviceLog("MAC not registered on server\n");
-    showSetupScreen("Register your device\n\nMAC: " + WiFi.macAddress() + "\n\non usetrmnl.com\nor your server dashboard");
-    goToDeepSleep(SLEEP_AFTER_SETUP);
-  } else {
-    deviceLog("Setup: unexpected status %d\n", status);
-    showErrorScreen("Setup error\nStatus: " + String(status));
-    apiErrorSleep();
-  }
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 //  BATTERY
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1275,240 +983,6 @@ String getWifiBand() {
     }
   }
   return "";
-}
-
-static String wifiStatusString(wl_status_t status) {
-  switch (status) {
-    case WL_IDLE_STATUS: return "IDLE";
-    case WL_NO_SSID_AVAIL: return "NO_SSID";
-    case WL_SCAN_COMPLETED: return "SCAN_COMPLETED";
-    case WL_CONNECTED: return "CONNECTED";
-    case WL_CONNECT_FAILED: return "CONNECT_FAILED";
-    case WL_CONNECTION_LOST: return "CONNECTION_LOST";
-    case WL_DISCONNECTED: return "DISCONNECTED";
-    default: return "UNKNOWN";
-  }
-}
-
-static String wakeReasonString(esp_sleep_wakeup_cause_t reason) {
-  switch (reason) {
-    case ESP_SLEEP_WAKEUP_UNDEFINED: return "UNDEFINED";
-    case ESP_SLEEP_WAKEUP_ALL: return "ALL";
-    case ESP_SLEEP_WAKEUP_TIMER: return "TIMER";
-    case ESP_SLEEP_WAKEUP_EXT0: return "EXT0";
-    case ESP_SLEEP_WAKEUP_EXT1: return "EXT1";
-    case ESP_SLEEP_WAKEUP_GPIO: return "GPIO";
-    case ESP_SLEEP_WAKEUP_UART: return "UART";
-    case ESP_SLEEP_WAKEUP_ULP: return "ULP";
-    case ESP_SLEEP_WAKEUP_TOUCHPAD: return "TOUCHPAD";
-    default: return "UNKNOWN";
-  }
-}
-
-void fetchAndDisplay(float batteryVoltage) {
-  deviceLog("GET /api/display...\n");
-  disableWiFiPS();
-  uint8_t batteryLevel = batteryPercent(batteryVoltage);
-  int16_t vbusAvg = 0;
-  int16_t vbusMax = 0;
-  bool externalPower = detectExternalPower(&vbusAvg, &vbusMax);
-  deviceLog("Power(display): VBUS avg=%dmV max=%dmV external=%d\n", vbusAvg, vbusMax, externalPower ? 1 : 0);
-
-  HTTPClient http;
-  String url = apiBaseUrl + "/api/display";
-  http.begin(url);
-  http.setTimeout(30000);
-  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-
-  bool imageCached = false;
-  prefs.begin(NVS_NAMESPACE, true);
-  if (prefs.isKey(KEY_LAST_FILENAME)) {
-    imageCached = true;
-  }
-  prefs.end();
-
-  addDisplayHeaders(http,
-                    WiFi.macAddress(),
-                    apiKey,
-                    refreshRate,
-                    batteryVoltage,
-                    batteryLevel,
-                    WiFi.RSSI(),
-                    imageCached,
-                    lastWakeTime,
-                    FW_VERSION_STR,
-                    DEVICE_MODEL,
-                    getWifiBand(),
-                    externalPower,
-                    externalPower,
-                    UPDATE_SOURCE_STR,
-                    DISPLAY_WIDTH,
-                    DISPLAY_HEIGHT);
-
-  int code = http.GET();
-  if (code < 200 || code >= 300) {
-    deviceLog("API failed, HTTP %d\n", code);
-    http.end();
-    showErrorScreen("Server error\nHTTP " + String(code));
-    enableWiFiPS();
-    apiErrorSleep();
-    return;
-  }
-
-  // Initialize RTC from server Date header if needed
-  tryInitRtcFromHttpDate(http.header("Date"));
-
-  String payload = http.getString();
-  http.end();
-
-  enableWiFiPS();
-
-  JsonDocument doc;
-  if (deserializeJson(doc, payload)) {
-    deviceLog("API: JSON parse error\n");
-    showErrorScreen("Server: bad response");
-    apiErrorSleep();
-    return;
-  }
-
-  // ── Success — reset API retry counter ──
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putInt(KEY_API_RETRY_COUNT, 1);
-  prefs.end();
-
-  int status = doc["status"] | -1;
-
-  // ── Handle reset_firmware ──
-  bool resetFirmware = doc["reset_firmware"] | false;
-  if (resetFirmware) {
-    deviceLog("Server requested device reset\n");
-    clearAllSettings();
-    ESP.restart();
-    return;
-  }
-
-  // ── Handle status codes ──
-  if (status == 202) {
-    // Device not yet linked to a user / plugin not attached
-    deviceLog("Status 202: plugin not attached\n");
-    showSetupScreen("Waiting for setup\n\nID: " + friendlyId + "\nMAC: " + WiFi.macAddress());
-    saveRefreshRate(SLEEP_NOT_CONNECTED);
-    checkRuntimeReset();
-    goToDeepSleep(SLEEP_NOT_CONNECTED);
-    return;
-  }
-
-  if (status == 500) {
-    // Server says device not found for this token
-    deviceLog("Status 500: device not found, resetting\n");
-    clearAllSettings();
-    ESP.restart();
-    return;
-  }
-
-  if (status != 0) {
-    deviceLog("API: unexpected status %d\n", status);
-    checkRuntimeReset();
-    goToDeepSleep(refreshRate);
-    return;
-  }
-
-  // ── Status 0: normal response ──
-  const char* imageUrl = doc["image_url"];
-  const char* filename = doc["filename"];
-  bool updateFirmware = doc["update_firmware"] | false;
-  const char* firmwareUrl = doc["firmware_url"];
-  int newRefreshRate = doc["refresh_rate"] | refreshRate;
-
-  String otaUrl = "";
-  String otaVersion = "";
-  bool forceOta = forceOtaOnThisBoot;
-  forceOtaOnThisBoot = false;  // Consume one-shot force for this boot
-
-  bool otaCheckAllowed = true;
-  bool otaExternalPower = isExternalPowerPresent();
-  if (batteryVoltage > 0.5 && batteryVoltage < OTA_MIN_BATTERY_VOLTAGE && !otaExternalPower) {
-    otaCheckAllowed = false;
-    deviceLog("OTA: skipped check due to low battery %.2fV < %.2fV\n", batteryVoltage, (double)OTA_MIN_BATTERY_VOLTAGE);
-  }
-
-  // Update refresh rate from server
-  if (newRefreshRate != refreshRate) {
-    deviceLog("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
-    saveRefreshRate(newRefreshRate);
-  }
-
-  // ── OTA firmware update ──
-  if (otaCheckAllowed) {
-    if (updateFirmware && firmwareUrl && strlen(firmwareUrl) > 0) {
-      otaUrl = String(firmwareUrl);
-      otaVersion = "server";
-      if (forceOta) {
-        deviceLog("OTA: server OTA selected while force flag active\n");
-      }
-    } else {
-      String githubUrl;
-      String githubVersion;
-      deviceLog("OTA: checking GitHub channel %s\n", otaBetaMode ? "beta" : "stable");
-      if (checkGitHubReleaseForUpdate(githubUrl, githubVersion, forceOta, otaBetaMode)) {
-        otaUrl = githubUrl;
-        otaVersion = githubVersion;
-      }
-    }
-  }
-
-  if (otaUrl.length() > 0) {
-    if (!forceOta && !isIntervalElapsed(KEY_OTA_LAST_ATTEMPT, OTA_SAFETY_INTERVAL_SEC)) {
-      deviceLog("OTA: attempt skipped due to 24h safety interval\n");
-    } else {
-      if (forceOta) {
-        deviceLog("OTA: forcing attempt (cooldown bypass)\n");
-      }
-      float otaVoltage = readBatteryAvg(4, 30);
-      bool externalPower = isExternalPowerPresent();
-      if (otaVoltage > 0.5 && otaVoltage < OTA_MIN_BATTERY_VOLTAGE && !externalPower) {
-        deviceLog("OTA: skipped due to low battery %.2fV < %.2fV\n", otaVoltage, (double)OTA_MIN_BATTERY_VOLTAGE);
-      } else {
-        markIntervalNow(KEY_OTA_LAST_ATTEMPT);
-        deviceLog("OTA update (%s): %s\n", otaVersion.c_str(), otaUrl.c_str());
-        if (performOTA(otaUrl.c_str())) {
-          return;  // OTA success — device will restart
-        }
-        deviceLog("OTA failed, continuing...\n");
-      }
-    }
-  }
-
-  // ── Check if image needs update ──
-  if (!imageUrl || strlen(imageUrl) == 0) {
-    deviceLog("No image_url — sleeping\n");
-    checkRuntimeReset();
-    goToDeepSleep(refreshRate);
-    return;
-  }
-
-  // Check if filename changed (image caching)
-  bool needsUpdate = true;
-  if (filename && strlen(filename) > 0) {
-    prefs.begin(NVS_NAMESPACE, false);
-    String lastFile = prefs.getString(KEY_LAST_FILENAME, "");
-    if (lastFile == String(filename)) {
-      deviceLog("Image unchanged (same filename) — skipping display\n");
-      needsUpdate = false;
-    } else {
-      prefs.putString(KEY_LAST_FILENAME, String(filename));
-    }
-    prefs.end();
-  }
-
-  if (needsUpdate) {
-    displayImage(imageUrl);
-  }
-
-  // Allow user to perform runtime resets by holding the wake button now.
-  checkRuntimeReset();
-
-  goToDeepSleep(refreshRate);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
