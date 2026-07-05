@@ -4,14 +4,11 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 
+#include "trmnl_keys.h"
+
 static const int M5PAPER_WAKE_BUTTON = 39;
 static const int BUTTON_HOLD_TIME = 5000;
 static const int BUTTON_FACTORY_RESET = 15000;
-
-static const char* NVS_NAMESPACE = "trmnl";
-static const char* KEY_WIFI_SSID = "wifi_ssid";
-static const char* KEY_WIFI_PASS = "wifi_pass";
-static const char* KEY_WIFI_RETRY_COUNT = "wifi_retry";
 
 extern Preferences prefs;
 extern void deviceLog(const char* fmt, ...);

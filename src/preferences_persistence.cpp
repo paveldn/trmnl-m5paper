@@ -2,16 +2,7 @@
 
 #include <Preferences.h>
 
-static const char* NVS_NAMESPACE = "trmnl";
-static const char* KEY_WIFI_SSID = "wifi_ssid";
-static const char* KEY_WIFI_PASS = "wifi_pass";
-static const char* KEY_API_KEY = "api_key";
-static const char* KEY_API_URL = "api_url";
-static const char* KEY_FRIENDLY_ID = "friendly_id";
-static const char* KEY_REFRESH_RATE = "refresh_rate";
-static const char* KEY_OTA_BETA_MODE = "ota_beta";
-static const char* KEY_OTA_LAST_CHECK = "ota_last_chk";
-static const char* KEY_OTA_LAST_ATTEMPT = "ota_last_try";
+#include "trmnl_keys.h"
 
 static const char* DEFAULT_API_BASE_URL = "https://trmnl.app";
 static const int DEFAULT_REFRESH_RATE = 900;

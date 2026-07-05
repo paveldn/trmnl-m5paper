@@ -3,14 +3,12 @@
 #include <Preferences.h>
 #include <WiFi.h>
 
+#include "trmnl_keys.h"
+
 static const int WIFI_CONNECT_TIMEOUT = 20000;
 static const int API_RETRY_1 = 15;
 static const int API_RETRY_2 = 30;
 static const int API_RETRY_3 = 60;
-
-static const char* NVS_NAMESPACE = "trmnl";
-static const char* KEY_WIFI_RETRY_COUNT = "wifi_retry";
-static const char* KEY_API_RETRY_COUNT = "retry_count";
 
 extern Preferences prefs;
 extern String configuredSSID;

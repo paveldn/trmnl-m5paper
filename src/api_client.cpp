@@ -8,18 +8,15 @@
 #include <cmath>
 
 #include "api_helpers.h"
+#include "image_pipeline.h"
+#include "ota.h"
+#include "power.h"
+#include "preferences_persistence.h"
+#include "trmnl_keys.h"
 
 #ifndef OTA_MIN_BATTERY_VOLTAGE
 #define OTA_MIN_BATTERY_VOLTAGE 3.65
 #endif
-
-static const char* NVS_NAMESPACE = "trmnl";
-static const char* KEY_FRIENDLY_ID = "friendly_id";
-static const char* KEY_API_RETRY_COUNT = "retry_count";
-static const char* KEY_LAST_FILENAME = "last_file";
-static const char* KEY_OTA_LAST_ATTEMPT = "ota_last_try";
-static const char* KEY_RTC_SET = "rtc_set";
-static const char* KEY_LOG_ID = "log_id";
 
 static const int SLEEP_NOT_CONNECTED = 5;
 static const float LOW_BATTERY_VOLTAGE = 3.4f;
@@ -46,25 +43,11 @@ extern String logBuffer;
 extern void deviceLog(const char* fmt, ...);
 extern void disableWiFiPS();
 extern void enableWiFiPS();
-extern bool tryInitRtcFromHttpDate(const String& dateHeader, bool force);
-extern void saveServerSettings(const String& key, const String& url);
-extern void saveRefreshRate(int rate);
-extern void clearAllSettings();
-extern bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force, bool includePrereleases);
-extern bool isIntervalElapsed(const char* key, uint32_t intervalSec);
-extern void markIntervalNow(const char* key);
-extern bool performOTA(const char* firmwareUrl);
-extern float readBatteryAvg(int samples, int delayMs);
-extern bool isExternalPowerPresent();
-extern bool isBatteryCharging();
-extern String getWifiBand();
-extern float getBatteryVoltage();
 extern void showErrorScreen(const String& message);
 extern void showSetupScreen(const String& message);
 extern void apiErrorSleep();
 extern void checkRuntimeReset();
 extern void goToDeepSleep(int seconds);
-extern void displayImage(const char* imageUrl);
 
 static String wifiStatusString(wl_status_t status) {
   switch (status) {
