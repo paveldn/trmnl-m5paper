@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <stdint.h>
 
 void addSetupHeaders(HTTPClient& http, const String& macAddress, const String& firmwareVersion, const String& model);
 void addDisplayHeaders(HTTPClient& http,
@@ -9,6 +10,7 @@ void addDisplayHeaders(HTTPClient& http,
                        const String& apiKey,
                        int refreshRate,
                        float batteryVoltage,
+                       uint8_t batteryLevel,
                        int rssi,
                        bool imageCached,
                        int prevWakeTime,

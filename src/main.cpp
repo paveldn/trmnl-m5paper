@@ -34,6 +34,8 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <algorithm>
+#include <cmath>
 #include <time.h>
 #include <sys/time.h>
 
@@ -88,7 +90,7 @@
 
 // OTA battery safety threshold (roughly ~20% for typical Li-ion curves)
 #ifndef OTA_MIN_BATTERY_VOLTAGE
-#define OTA_MIN_BATTERY_VOLTAGE 3.7
+#define OTA_MIN_BATTERY_VOLTAGE 3.65
 #endif
 
 // ─────────────────────────── NVS Keys ───────────────────────────
@@ -288,6 +290,7 @@ void saveServerSettings(const String& key, const String& url);
 void clearAllSettings();
 bool connectWiFi();
 float getBatteryVoltage();
+uint8_t batteryPercent(float voltage);
 bool isExternalPowerPresent();
 bool isBatteryCharging();
 String getWifiBand();
@@ -365,7 +368,7 @@ void setup() {
 
   // ── Display init ──
   M5.Display.setRotation(1);  // landscape 960x540
-  M5.Display.setEpdMode(epd_mode_t::epd_fast); // Full refresh on first boot
+  M5.Display.setEpdMode(epd_mode_t::epd_quality); // Full refresh on first boot
 
   // Power optimization
   setCpuFrequencyMhz(80);
@@ -391,7 +394,7 @@ void setup() {
 
     if (holdTime >= BUTTON_FACTORY_RESET) {
       deviceLog("Factory reset (15s hold)\n");
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
       prefs.begin(NVS_NAMESPACE, false);
       prefs.clear();
       prefs.end();
@@ -1206,6 +1209,21 @@ float getBatteryVoltage() {
   return voltage;
 }
 
+uint8_t batteryPercent(float voltage) {
+  constexpr float BATTERY_FULL = 4.20f;
+  constexpr float BATTERY_EMPTY = 3.40f;
+  constexpr float BATTERY_GAMMA = 1.70f;
+
+  voltage = std::clamp(voltage, BATTERY_EMPTY, BATTERY_FULL);
+
+  float normalized =
+      (voltage - BATTERY_EMPTY) /
+      (BATTERY_FULL - BATTERY_EMPTY);
+
+  float capacity = std::pow(normalized, BATTERY_GAMMA);
+  return static_cast<uint8_t>(capacity * 100.0f + 0.5f);
+}
+
 float readBatteryAvg(int samples, int delayMs) {
   if (samples <= 0) samples = 1;
   if (samples > 32) samples = 32;
@@ -1298,6 +1316,7 @@ static String wakeReasonString(esp_sleep_wakeup_cause_t reason) {
 void fetchAndDisplay(float batteryVoltage) {
   deviceLog("GET /api/display...\n");
   disableWiFiPS();
+  uint8_t batteryLevel = batteryPercent(batteryVoltage);
 
   HTTPClient http;
   String url = apiBaseUrl + "/api/display";
@@ -1317,6 +1336,7 @@ void fetchAndDisplay(float batteryVoltage) {
                     apiKey,
                     refreshRate,
                     batteryVoltage,
+                    batteryLevel,
                     WiFi.RSSI(),
                     imageCached,
                     lastWakeTime,
@@ -1462,8 +1482,8 @@ void fetchAndDisplay(float batteryVoltage) {
       }
       float otaVoltage = readBatteryAvg(4, 30);
       bool externalPower = isExternalPowerPresent();
-      if (otaVoltage > 0.5 && otaVoltage < LOW_BATTERY_VOLTAGE && !externalPower) {
-        deviceLog("OTA: skipped due to low battery %.2fV\n", otaVoltage);
+      if (otaVoltage > 0.5 && otaVoltage < OTA_MIN_BATTERY_VOLTAGE && !externalPower) {
+        deviceLog("OTA: skipped due to low battery %.2fV < %.2fV\n", otaVoltage, (double)OTA_MIN_BATTERY_VOLTAGE);
       } else {
         markIntervalNow(KEY_OTA_LAST_ATTEMPT);
         deviceLog("OTA update (%s): %s\n", otaVersion.c_str(), otaUrl.c_str());
@@ -1517,12 +1537,12 @@ void displayImage(const char* imageUrl) {
     partialRefreshCount++;
 
     if (partialRefreshCount >= FULL_REFRESH_INTERVAL) {
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
       partialRefreshCount = 0;
       deviceLog("Full refresh (ghost clear)\n");
     } else {
       deviceLog("Fast refresh\n");
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
     }
 
     // Clear display to initialize IT8951E framebuffer, then immediately push new image
@@ -1729,7 +1749,7 @@ bool performOTA(const char* firmwareUrl) {
 //  DISPLAY HELPERS
 // ═══════════════════════════════════════════════════════════════════════════════
 void showLoadingScreen() {
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -1743,7 +1763,7 @@ void showLoadingScreen() {
 }
 
 void showSetupScreen(const String& message) {
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -1772,7 +1792,7 @@ void showSetupScreen(const String& message) {
 }
 
 void showErrorScreen(const String& message) {
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -1803,7 +1823,7 @@ void showErrorScreen(const String& message) {
 //  LOW BATTERY WARNING
 // ═══════════════════════════════════════════════════════════════════════════════
 void showLowBatteryAndShutdown() {
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
 
   // Draw battery icon (centered, large) — Material Design style battery_alert
@@ -1839,7 +1859,8 @@ void showLowBatteryAndShutdown() {
 
   canvas.setFont(&fonts::FreeSans9pt7b);
   float v = readBatteryAvg(6, 20);
-  canvas.drawString(String(v, 2) + "V - Connect USB to charge", cx, cy + bh/2 + 90);
+  uint8_t pct = batteryPercent(v);
+  canvas.drawString(String(pct) + "%  " + String(v, 2) + "V - Connect USB to charge", cx, cy + bh/2 + 90);
 
   canvas.pushSprite(0, 0);
   M5.Display.waitDisplay();

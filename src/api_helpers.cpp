@@ -12,6 +12,7 @@ void addDisplayHeaders(HTTPClient& http,
                        const String& apiKey,
                        int refreshRate,
                        float batteryVoltage,
+                       uint8_t batteryLevel,
                        int rssi,
                        bool imageCached,
                        int prevWakeTime,
@@ -29,6 +30,7 @@ void addDisplayHeaders(HTTPClient& http,
   http.addHeader("Access-Token", apiKey);
   http.addHeader("Refresh-Rate", String(refreshRate));
   http.addHeader("Battery-Voltage", String(batteryVoltage, 2));
+  http.addHeader("Percent-Charged", String(batteryLevel));
   http.addHeader("Battery-Charging", batteryCharging ? "1" : "0");
   http.addHeader("USB-Connected", usbConnected ? "true" : "false");
   http.addHeader("FW-Version", firmwareVersion);
