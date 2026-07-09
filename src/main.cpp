@@ -293,6 +293,7 @@ float getBatteryVoltage();
 uint8_t batteryPercent(float voltage);
 bool isExternalPowerPresent();
 bool isBatteryCharging();
+bool detectExternalPower(int16_t* vbusAvgOut = nullptr, int16_t* vbusMaxOut = nullptr);
 String getWifiBand();
 static String wifiStatusString(wl_status_t status);
 static String wakeReasonString(esp_sleep_wakeup_cause_t reason);
@@ -315,6 +316,10 @@ bool isIntervalElapsed(const char* key, uint32_t intervalSec);
 void markIntervalNow(const char* key);
 bool parseVersionParts(const String& version, int& major, int& minor, int& patch);
 int compareVersions(const String& a, const String& b);
+String normalizeVersionTag(const String& version);
+String versionBasePart(const String& version);
+int prereleaseRankForBetaChannel(const String& version);
+bool isSameBaseVersion(const String& a, const String& b);
 String extractDeviceNameFromPayload(const JsonDocument& doc);
 bool isBetaName(const String& deviceName);
 void setOtaModeFromName(const String& deviceName);
@@ -701,6 +706,58 @@ int compareVersions(const String& a, const String& b) {
   return 0;
 }
 
+String normalizeVersionTag(const String& version) {
+  String v = version;
+  v.trim();
+  while (v.length() > 0 && !isDigit(v[0])) {
+    v.remove(0, 1);
+  }
+  return v;
+}
+
+String versionBasePart(const String& version) {
+  String v = normalizeVersionTag(version);
+  int end = v.length();
+  int dash = v.indexOf('-');
+  int plus = v.indexOf('+');
+  if (dash >= 0 && dash < end) end = dash;
+  if (plus >= 0 && plus < end) end = plus;
+  return v.substring(0, end);
+}
+
+int prereleaseRankForBetaChannel(const String& version) {
+  String v = normalizeVersionTag(version);
+  int dash = v.indexOf('-');
+  if (dash < 0) {
+    return 0;  // Stable release
+  }
+
+  String pre = v.substring(dash + 1);
+  pre.toLowerCase();
+
+  int number = 0;
+  bool hasNumber = false;
+  for (int i = 0; i < pre.length(); ++i) {
+    if (isDigit(pre[i])) {
+      hasNumber = true;
+      number = (number * 10) + (pre[i] - '0');
+    }
+  }
+
+  if (pre.startsWith("beta")) {
+    return 1000 + (hasNumber ? number : 1);
+  }
+  if (pre.startsWith("rc")) {
+    return 2000 + (hasNumber ? number : 1);
+  }
+
+  return 500 + (hasNumber ? number : 0);
+}
+
+bool isSameBaseVersion(const String& a, const String& b) {
+  return versionBasePart(a).equalsIgnoreCase(versionBasePart(b));
+}
+
 bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force, bool includePrereleases) {
   firmwareUrlOut = "";
   versionOut = "";
@@ -843,10 +900,21 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
           continue;
         }
 
-        // In beta mode, allow equal base version updates, but only from
-        // prerelease -> stable (not stable -> prerelease).
-        if (versionCmp == 0 && isPrerelease && !currentIsPrerelease) {
-          continue;
+        if (versionCmp == 0) {
+          if (!isSameBaseVersion(normalizedTag, currentTag)) {
+            continue;
+          }
+
+          int candidatePreRank = prereleaseRankForBetaChannel(normalizedTag);
+          int currentPreRank = prereleaseRankForBetaChannel(currentTag);
+
+          // Allow prerelease -> stable on the same base.
+          if (!(candidatePreRank == 0 && currentIsPrerelease)) {
+            // Otherwise only allow strictly newer prerelease rank.
+            if (candidatePreRank <= currentPreRank) {
+              continue;
+            }
+          }
         }
       }
 
@@ -1210,7 +1278,7 @@ float getBatteryVoltage() {
 }
 
 uint8_t batteryPercent(float voltage) {
-  constexpr float BATTERY_FULL = 4.20f;
+  constexpr float BATTERY_FULL = 4.10f;
   constexpr float BATTERY_EMPTY = 3.40f;
   constexpr float BATTERY_GAMMA = 1.70f;
 
@@ -1253,18 +1321,65 @@ float readBatteryAvg(int samples, int delayMs) {
 // ═══════════════════════════════════════════════════════════════════════════════
 //  API COMMUNICATION (/api/display)
 // ═══════════════════════════════════════════════════════════════════════════════
+bool detectExternalPower(int16_t* vbusAvgOut, int16_t* vbusMaxOut) {
+  // VBUS ADC can be noisy on wake; use multiple samples and majority logic.
+  constexpr int SAMPLE_COUNT = 5;
+  constexpr int VBUS_PRESENT_MV = 4000;
+  constexpr int BAT_CURRENT_CHARGING_MA = 10;
+  constexpr float BAT_FULL_HINT_V = 4.18f;
+
+  int32_t sum = 0;
+  int16_t maxV = 0;
+  int aboveThreshold = 0;
+  int invalidCount = 0;
+
+  for (int i = 0; i < SAMPLE_COUNT; ++i) {
+    int16_t v = M5.Power.getVBUSVoltage();
+    if (v < 0) {
+      invalidCount++;
+      v = 0;
+    }
+    sum += v;
+    if (v > maxV) maxV = v;
+    if (v >= VBUS_PRESENT_MV) aboveThreshold++;
+    if (i < SAMPLE_COUNT - 1) delay(5);
+  }
+
+  int16_t avgV = static_cast<int16_t>(sum / SAMPLE_COUNT);
+  bool present = (aboveThreshold >= 2) || (avgV >= VBUS_PRESENT_MV);
+
+  // Fallback for boards where VBUS telemetry is unavailable (often returns -1).
+  if (!present && invalidCount == SAMPLE_COUNT) {
+    bool charging = M5.Power.isCharging();
+    int32_t batCurrent = M5.Power.getBatteryCurrent();
+    float batV = readBatteryAvg(4, 5);
+
+    // If VBUS is unavailable, infer external power from any strong signal:
+    // explicit charging flag, positive charge current, or near-full charging plateau.
+    present = charging || (batCurrent > BAT_CURRENT_CHARGING_MA) || (batV >= BAT_FULL_HINT_V);
+    deviceLog("Power(fallback): charging=%d batCurrent=%ldmA batV=%.2fV\n",
+              charging ? 1 : 0,
+              (long)batCurrent,
+              batV);
+  }
+
+  if (vbusAvgOut) *vbusAvgOut = avgV;
+  if (vbusMaxOut) *vbusMaxOut = maxV;
+  return present;
+}
+
 bool isExternalPowerPresent() {
-  int16_t vbus = M5.Power.getVBUSVoltage();
-  // For M5Paper, isCharging() is not reliable in M5Unified.
-  bool present = vbus > 4000;
-  deviceLog("Power: VBUS=%dmV external=%d\n", vbus, present ? 1 : 0);
+  int16_t avgV = 0;
+  int16_t maxV = 0;
+  bool present = detectExternalPower(&avgV, &maxV);
+  deviceLog("Power: VBUS avg=%dmV max=%dmV external=%d\n", avgV, maxV, present ? 1 : 0);
   return present;
 }
 
 bool isBatteryCharging() {
   // M5Paper does not provide a reliable charging-state signal via M5Unified.
-  // Treat USB/VBUS presence as charging for upstream telemetry compatibility.
-  return isExternalPowerPresent();
+  // Treat stable USB/VBUS presence as charging for upstream telemetry compatibility.
+  return detectExternalPower();
 }
 
 String getWifiBand() {
@@ -1317,6 +1432,10 @@ void fetchAndDisplay(float batteryVoltage) {
   deviceLog("GET /api/display...\n");
   disableWiFiPS();
   uint8_t batteryLevel = batteryPercent(batteryVoltage);
+  int16_t vbusAvg = 0;
+  int16_t vbusMax = 0;
+  bool externalPower = detectExternalPower(&vbusAvg, &vbusMax);
+  deviceLog("Power(display): VBUS avg=%dmV max=%dmV external=%d\n", vbusAvg, vbusMax, externalPower ? 1 : 0);
 
   HTTPClient http;
   String url = apiBaseUrl + "/api/display";
@@ -1343,8 +1462,8 @@ void fetchAndDisplay(float batteryVoltage) {
                     FW_VERSION_STR,
                     DEVICE_MODEL,
                     getWifiBand(),
-                    isBatteryCharging(),
-                    isExternalPowerPresent(),
+                    externalPower,
+                    externalPower,
                     UPDATE_SOURCE_STR,
                     DISPLAY_WIDTH,
                     DISPLAY_HEIGHT);
