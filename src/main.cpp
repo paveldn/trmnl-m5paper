@@ -287,6 +287,7 @@ void loadSettings();
 void saveWiFiSettings(const String& ssid, const String& pass);
 float readBatteryAvg(int samples = 6, int delayMs = 50);
 void saveServerSettings(const String& key, const String& url);
+void saveOtaBetaMode(bool enabled);
 void clearAllSettings();
 bool connectWiFi();
 float getBatteryVoltage();
@@ -305,6 +306,7 @@ void goToDeepSleep(int seconds);
 void showSetupScreen(const String& message);
 void showErrorScreen(const String& message);
 void showLoadingScreen();
+void invalidateImageCache(const char* reason = nullptr);
 bool performOTA(const char* firmwareUrl);
 void wifiErrorSleep();
 void apiErrorSleep();
@@ -320,9 +322,6 @@ String normalizeVersionTag(const String& version);
 String versionBasePart(const String& version);
 int prereleaseRankForBetaChannel(const String& version);
 bool isSameBaseVersion(const String& a, const String& b);
-String extractDeviceNameFromPayload(const JsonDocument& doc);
-bool isBetaName(const String& deviceName);
-void setOtaModeFromName(const String& deviceName);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SETUP — Main algorithm (runs on every wake from deep sleep)
@@ -517,6 +516,22 @@ void saveServerSettings(const String& key, const String& url) {
   if (url.length() > 0) apiBaseUrl = url;
 }
 
+void saveOtaBetaMode(bool enabled) {
+  if (enabled == otaBetaMode) {
+    return;
+  }
+
+  otaBetaMode = enabled;
+  deviceLog("OTA: mode switched to %s from settings\n", otaBetaMode ? "beta" : "stable");
+
+  // Reset update cooldowns when switching channels so checks run immediately.
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBool(KEY_OTA_BETA_MODE, otaBetaMode);
+  prefs.remove(KEY_OTA_LAST_CHECK);
+  prefs.remove(KEY_OTA_LAST_ATTEMPT);
+  prefs.end();
+}
+
 void saveRefreshRate(int rate) {
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putInt(KEY_REFRESH_RATE, rate);
@@ -536,94 +551,6 @@ void clearAllSettings() {
   refreshRate = DEFAULT_REFRESH_RATE;
   otaBetaMode = false;
   savedChannel = 0;
-}
-
-String extractDeviceNameFromPayload(const JsonDocument& doc) {
-  JsonVariantConst name = doc["name"];
-  if (name.is<const char*>()) {
-    String value = name.as<const char*>();
-    value.trim();
-    if (value.length() > 0) return value;
-  }
-
-  JsonVariantConst deviceName = doc["device_name"];
-  if (deviceName.is<const char*>()) {
-    String value = deviceName.as<const char*>();
-    value.trim();
-    if (value.length() > 0) return value;
-  }
-
-  JsonVariantConst friendlyName = doc["friendly_name"];
-  if (friendlyName.is<const char*>()) {
-    String value = friendlyName.as<const char*>();
-    value.trim();
-    if (value.length() > 0) return value;
-  }
-
-  JsonVariantConst fid = doc["friendly_id"];
-  if (fid.is<const char*>()) {
-    String value = fid.as<const char*>();
-    value.trim();
-    if (value.length() > 0) return value;
-  }
-
-  JsonVariantConst nestedDeviceName = doc["device"]["name"];
-  if (nestedDeviceName.is<const char*>()) {
-    String value = nestedDeviceName.as<const char*>();
-    value.trim();
-    if (value.length() > 0) return value;
-  }
-
-  JsonVariantConst nestedFriendlyName = doc["device"]["friendly_name"];
-  if (nestedFriendlyName.is<const char*>()) {
-    String value = nestedFriendlyName.as<const char*>();
-    value.trim();
-    if (value.length() > 0) return value;
-  }
-
-  return "";
-}
-
-bool isBetaName(const String& deviceName) {
-  String normalized = deviceName;
-  normalized.trim();
-  while (normalized.endsWith(":")) {
-    normalized.remove(normalized.length() - 1, 1);
-    normalized.trim();
-  }
-
-  String lower = normalized;
-  lower.toLowerCase();
-  if (!lower.endsWith("beta")) {
-    return false;
-  }
-
-  int suffixStart = lower.length() - 4;
-  if (suffixStart <= 0) {
-    return true;
-  }
-
-  char before = lower[suffixStart - 1];
-  return !isAlphaNumeric(before);
-}
-
-void setOtaModeFromName(const String& deviceName) {
-  if (deviceName.length() == 0) return;
-
-  bool newBetaMode = isBetaName(deviceName);
-  if (newBetaMode == otaBetaMode) {
-    return;
-  }
-
-  deviceLog("OTA: mode switched to %s based on device name '%s'\n", newBetaMode ? "beta" : "stable", deviceName.c_str());
-  otaBetaMode = newBetaMode;
-
-  // Reset update cooldowns when switching channels so the new channel is checked immediately.
-  prefs.begin(NVS_NAMESPACE, false);
-  prefs.putBool(KEY_OTA_BETA_MODE, otaBetaMode);
-  prefs.remove(KEY_OTA_LAST_CHECK);
-  prefs.remove(KEY_OTA_LAST_ATTEMPT);
-  prefs.end();
 }
 
 bool getCurrentEpoch(time_t& epochOut) {
@@ -671,6 +598,25 @@ void markIntervalNow(const char* key) {
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putULong(key, (uint32_t)now);
   prefs.end();
+}
+
+void invalidateImageCache(const char* reason) {
+  prefs.begin(NVS_NAMESPACE, false);
+  bool hadFilename = prefs.isKey(KEY_LAST_FILENAME);
+  bool hadEtag = prefs.isKey(KEY_IMAGE_ETAG);
+  bool hadLastMod = prefs.isKey(KEY_IMAGE_LASTMOD);
+  prefs.remove(KEY_LAST_FILENAME);
+  prefs.remove(KEY_IMAGE_ETAG);
+  prefs.remove(KEY_IMAGE_LASTMOD);
+  prefs.end();
+
+  if (hadFilename || hadEtag || hadLastMod) {
+    if (reason && strlen(reason) > 0) {
+      deviceLog("Image cache invalidated (%s)\n", reason);
+    } else {
+      deviceLog("Image cache invalidated\n");
+    }
+  }
 }
 
 bool parseVersionParts(const String& version, int& major, int& minor, int& patch) {
@@ -1232,19 +1178,19 @@ void registerDevice() {
   if (status == 200) {
     String key = doc["api_key"] | "";
     String fid = doc["friendly_id"] | "";
-    String deviceName = extractDeviceNameFromPayload(doc);
-    if (deviceName.length() == 0) {
-      deviceName = fid;
+    if (fid.length() > 0) {
+      deviceLog("Friendly ID detected: %s\n", fid.c_str());
+    } else {
+      deviceLog("No friendly ID detected\n");
     }
 
     if (key.length() > 0) {
       saveServerSettings(key, "");
       prefs.begin(NVS_NAMESPACE, false);
-      prefs.putString(KEY_FRIENDLY_ID, deviceName.length() > 0 ? deviceName : fid);
+      prefs.putString(KEY_FRIENDLY_ID, fid);
       prefs.putInt(KEY_API_RETRY_COUNT, 1);
       prefs.end();
-      friendlyId = deviceName.length() > 0 ? deviceName : fid;
-      setOtaModeFromName(friendlyId);
+      friendlyId = fid;
       deviceLog("Registered! API Key: %s, Friendly ID: %s\n", key.c_str(), fid.c_str());
     }
   } else if (status == 404) {
@@ -1500,18 +1446,6 @@ void fetchAndDisplay(float batteryVoltage) {
   prefs.end();
 
   int status = doc["status"] | -1;
-
-  String serverDeviceName = extractDeviceNameFromPayload(doc);
-  if (serverDeviceName.length() > 0) {
-    if (serverDeviceName != friendlyId) {
-      prefs.begin(NVS_NAMESPACE, false);
-      prefs.putString(KEY_FRIENDLY_ID, serverDeviceName);
-      prefs.end();
-      friendlyId = serverDeviceName;
-      deviceLog("Device name updated from server: %s\n", serverDeviceName.c_str());
-    }
-    setOtaModeFromName(serverDeviceName);
-  }
 
   // ── Handle reset_firmware ──
   bool resetFirmware = doc["reset_firmware"] | false;
@@ -1858,6 +1792,7 @@ bool performOTA(const char* firmwareUrl) {
   }
 
   deviceLog("OTA success! Restarting...\n");
+  invalidateImageCache("ota");
   showSetupScreen("Firmware Updated!\n\nRestarting...");
   delay(1000);
   ESP.restart();
@@ -1882,6 +1817,7 @@ void showLoadingScreen() {
 }
 
 void showSetupScreen(const String& message) {
+  invalidateImageCache("setup_screen");
   M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
@@ -1911,6 +1847,7 @@ void showSetupScreen(const String& message) {
 }
 
 void showErrorScreen(const String& message) {
+  invalidateImageCache("error_screen");
   M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
@@ -1942,6 +1879,7 @@ void showErrorScreen(const String& message) {
 //  LOW BATTERY WARNING
 // ═══════════════════════════════════════════════════════════════════════════════
 void showLowBatteryAndShutdown() {
+  invalidateImageCache("low_battery_screen");
   M5.Display.setEpdMode(epd_mode_t::epd_quality);
   canvas.fillSprite(TFT_WHITE);
 

@@ -12,9 +12,11 @@ extern String configuredPass;
 extern String apiKey;
 extern String apiBaseUrl;
 extern String friendlyId;
+extern bool otaBetaMode;
 
 extern void saveWiFiSettings(const String& ssid, const String& pass);
 extern void saveServerSettings(const String& key, const String& url);
+extern void saveOtaBetaMode(bool enabled);
 extern void clearAllSettings();
 extern void showSetupScreen(const String& message);
 extern void goToDeepSleep(int seconds);
@@ -30,6 +32,35 @@ static DNSServer dnsServer;
 static bool portalActive = false;
 
 static const int DNS_PORT = 53;
+
+static bool isZeroMac(const String& mac) {
+  return mac == "00:00:00:00:00:00";
+}
+
+static String getPortalMacAddress() {
+  String mac = WiFi.macAddress();
+  if (!isZeroMac(mac) && mac.length() > 0) {
+    return mac;
+  }
+
+  mac = WiFi.softAPmacAddress();
+  if (!isZeroMac(mac) && mac.length() > 0) {
+    return mac;
+  }
+
+  uint64_t chipMac = ESP.getEfuseMac();
+  char buf[18];
+  snprintf(buf,
+           sizeof(buf),
+           "%02X:%02X:%02X:%02X:%02X:%02X",
+           (uint8_t)(chipMac >> 40),
+           (uint8_t)(chipMac >> 32),
+           (uint8_t)(chipMac >> 24),
+           (uint8_t)(chipMac >> 16),
+           (uint8_t)(chipMac >> 8),
+           (uint8_t)chipMac);
+  return String(buf);
+}
 
 // ─────────────────────────── HTML ───────────────────────────
 static const char PORTAL_HTML[] PROGMEM = R"rawliteral(
@@ -84,6 +115,13 @@ select{appearance:auto}
 <input type="text" id="apikey" name="apikey" placeholder="Optional - or use auto-registration">
 <p class="info">Leave empty to use MAC-based auto-registration, or paste your TRMNL API key</p>
 </div>
+<div class="section">
+<label for="ota_beta">Firmware Channel</label>
+<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-top:6px">
+<input type="checkbox" id="ota_beta" name="ota_beta" style="width:auto">
+Use beta OTA channel (prereleases)
+</label>
+</div>
 <button type="submit">Save & Connect</button>
 </form>
 <div id="status" class="status"></div>
@@ -106,7 +144,8 @@ document.getElementById('configForm').addEventListener('submit',function(e){
     ssid:document.getElementById('ssid').value,
     pass:document.getElementById('pass').value,
     url:document.getElementById('server').value==='custom'?document.getElementById('url').value:'https://trmnl.app',
-    apikey:document.getElementById('apikey').value
+    apikey:document.getElementById('apikey').value,
+    ota_beta:document.getElementById('ota_beta').checked
   };
   fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
   .then(r=>r.json()).then(d=>{
@@ -120,6 +159,10 @@ function resetDevice(){
       body:JSON.stringify({reset:true})}).then(()=>{location.reload();});
   }
 }
+
+fetch('/status').then(r=>r.json()).then(s=>{
+  document.getElementById('ota_beta').checked=!!s.ota_beta;
+}).catch(()=>{});
 </script>
 </body>
 </html>
@@ -128,7 +171,7 @@ function resetDevice(){
 // ─────────────────────────── Handlers ───────────────────────────
 static void handlePortalRoot() {
   String html = String(PORTAL_HTML);
-  html.replace("%MAC%", WiFi.macAddress());
+  html.replace("%MAC%", getPortalMacAddress());
   html.replace("%FW%", FW_VERSION_STR);
   webServer.send(200, "text/html", html);
 }
@@ -160,6 +203,7 @@ static void handlePortalSave() {
   String pass = doc["pass"] | "";
   String url = doc["url"] | DEFAULT_API_BASE_URL_STR;
   String key = doc["apikey"] | "";
+  bool otaBeta = doc["ota_beta"] | false;
 
   if (ssid.length() == 0) {
     webServer.send(400, "application/json", "{\"success\":false,\"message\":\"SSID required\"}");
@@ -173,6 +217,7 @@ static void handlePortalSave() {
 
   saveWiFiSettings(ssid, pass);
   saveServerSettings(key, url);
+  saveOtaBetaMode(otaBeta);
 
   webServer.send(200, "application/json", "{\"success\":true}");
 
@@ -184,9 +229,10 @@ static void handlePortalSave() {
 static void handlePortalStatus() {
   JsonDocument doc;
   doc["configured"] = (configuredSSID.length() > 0);
-  doc["mac"] = WiFi.macAddress();
+  doc["mac"] = getPortalMacAddress();
   doc["fw"] = FW_VERSION_STR;
   doc["friendly_id"] = friendlyId;
+  doc["ota_beta"] = otaBetaMode;
 
   String json;
   serializeJson(doc, json);
