@@ -12,7 +12,7 @@
 #include "trmnl_keys.h"
 
 #ifndef FW_VERSION
-#define FW_VERSION "2.6.0"
+#error "FW_VERSION must be defined by build system (platformio.ini custom_app_version)"
 #endif
 
 #ifndef OTA_FIRMWARE_ASSET_NAME

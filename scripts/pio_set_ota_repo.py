@@ -56,11 +56,6 @@ project_dir = env.subst("$PROJECT_DIR")
 origin_url = _get_origin_url(project_dir)
 owner, repo = _extract_owner_repo(origin_url)
 host = _remote_host(origin_url)
-fw_version = (os.getenv("FW_VERSION_VALUE") or "").strip()
-
-if fw_version:
-    env.Append(BUILD_FLAGS=['-DFW_VERSION=\\"%s\\"' % fw_version])
-    print("[ota] Using FW_VERSION from environment: %s" % fw_version)
 
 if owner and repo:
     env.Append(

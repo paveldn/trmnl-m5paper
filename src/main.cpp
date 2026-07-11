@@ -20,7 +20,7 @@
  * 
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
  * 
- * @version 2.6.0
+ * @version defined by platformio.ini app_version
  * @see https://docs.trmnl.com/go/diy/byod
  */
 
@@ -46,7 +46,7 @@
 #define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
 #define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #ifndef FW_VERSION
-#define FW_VERSION          "2.6.0"
+#error "FW_VERSION must be defined by build system (platformio.ini custom_app_version)"
 #endif
 #define DISPLAY_WIDTH       960
 #define DISPLAY_HEIGHT      540
