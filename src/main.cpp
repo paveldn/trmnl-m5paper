@@ -168,7 +168,7 @@ void setup() {
 
   // ── Display init ──
   M5.Display.setRotation(1);  // landscape 960x540
-  M5.Display.setEpdMode(epd_mode_t::epd_quality); // Full refresh on first boot
+  M5.Display.setEpdMode(DEFAULT_EPD_MODE); // Full refresh on first boot
 
   // Power optimization
   setCpuFrequencyMhz(80);

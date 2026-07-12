@@ -11,7 +11,7 @@ extern int partialRefreshCount;
 extern void invalidateImageCache(const char* reason);
 
 void showLoadingScreen() {
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(DEFAULT_EPD_MODE);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -26,7 +26,7 @@ void showLoadingScreen() {
 
 void showSetupScreen(const String& message) {
   invalidateImageCache("setup_screen");
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(DEFAULT_EPD_MODE);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);
@@ -56,7 +56,7 @@ void showSetupScreen(const String& message) {
 
 void showErrorScreen(const String& message) {
   invalidateImageCache("error_screen");
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.setEpdMode(DEFAULT_EPD_MODE);
   canvas.fillSprite(TFT_WHITE);
   canvas.setTextColor(TFT_BLACK);
   canvas.setTextDatum(MC_DATUM);

@@ -431,6 +431,9 @@ void fetchAndDisplay(float batteryVoltage) {
 
   // Check if filename changed (image caching)
   bool needsUpdate = true;
+#ifdef FORCE_IMAGE_REFRESH_ON_WAKE
+  deviceLog("Image force-refresh enabled - redrawing on every wake\n");
+#else
   if (filename && strlen(filename) > 0) {
     prefs.begin(NVS_NAMESPACE, false);
     String lastFile = prefs.getString(KEY_LAST_FILENAME, "");
@@ -442,6 +445,7 @@ void fetchAndDisplay(float batteryVoltage) {
     }
     prefs.end();
   }
+#endif
 
   if (needsUpdate) {
     displayImage(imageUrl);

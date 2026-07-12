@@ -34,7 +34,7 @@ bool handleBootButtonReset() {
 
     if (holdTime >= BUTTON_FACTORY_RESET) {
       deviceLog("Factory reset (15s hold)\n");
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      M5.Display.setEpdMode(DEFAULT_EPD_MODE);
       prefs.begin(NVS_NAMESPACE, false);
       prefs.clear();
       prefs.end();

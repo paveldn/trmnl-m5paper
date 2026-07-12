@@ -124,7 +124,7 @@ bool isBatteryCharging() {
 
 void showLowBatteryAndShutdown() {
   invalidateImageCache("low_battery_screen");
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.setEpdMode(DEFAULT_EPD_MODE);
   canvas.fillSprite(TFT_WHITE);
 
   // Draw battery icon (centered, large) — Material Design style battery_alert

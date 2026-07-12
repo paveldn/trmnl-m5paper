@@ -46,12 +46,12 @@ void displayImage(const char* imageUrl) {
     partialRefreshCount++;
 
     if (partialRefreshCount >= FULL_REFRESH_INTERVAL) {
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      M5.Display.setEpdMode(DEFAULT_EPD_MODE);
       partialRefreshCount = 0;
       deviceLog("Full refresh (ghost clear)\n");
     } else {
       deviceLog("Fast refresh\n");
-      M5.Display.setEpdMode(epd_mode_t::epd_fast);
+      M5.Display.setEpdMode(DEFAULT_EPD_MODE);
     }
 
     // Clear display to initialize IT8951E framebuffer, then immediately push new image
@@ -75,6 +75,7 @@ bool downloadAndDisplayImage(const char* url) {
     addAuthHeaders(http, WiFi.macAddress(), apiKey);
   }
 
+#ifndef FORCE_IMAGE_REFRESH_ON_WAKE
   // Send conditional GET if we have a stored ETag/Last-Modified
   prefs.begin(NVS_NAMESPACE, true);
   String storedEtag = "";
@@ -92,15 +93,20 @@ bool downloadAndDisplayImage(const char* url) {
   if (storedLast.length() > 0) {
     http.addHeader("If-Modified-Since", storedLast);
   }
+#else
+  deviceLog("Image force-refresh enabled - skipping conditional GET headers\n");
+#endif
   http.setTimeout(30000);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
 
   int code = http.GET();
+#ifndef FORCE_IMAGE_REFRESH_ON_WAKE
   if (code == HTTP_CODE_NOT_MODIFIED) {
     deviceLog("Img HTTP 304 Not Modified\n");
     http.end();
     return false;
   }
+#endif
 
   if (code != HTTP_CODE_OK) {
     deviceLog("Img HTTP %d\n", code);
