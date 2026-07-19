@@ -14,6 +14,7 @@ extern String apiKey;
 extern String apiBaseUrl;
 extern String friendlyId;
 extern int refreshRate;
+extern bool otaEnabled;
 extern bool otaBetaMode;
 extern uint8_t savedChannel;
 
@@ -25,6 +26,7 @@ void loadSettings() {
   apiBaseUrl = prefs.getString(KEY_API_URL, DEFAULT_API_BASE_URL);
   friendlyId = prefs.getString(KEY_FRIENDLY_ID, "");
   refreshRate = prefs.getInt(KEY_REFRESH_RATE, DEFAULT_REFRESH_RATE);
+  otaEnabled = prefs.getBool(KEY_OTA_ENABLED, true);
   otaBetaMode = prefs.getBool(KEY_OTA_BETA_MODE, false);
   prefs.end();
 }
@@ -46,6 +48,20 @@ void saveServerSettings(const String& key, const String& url) {
   prefs.end();
   if (key.length() > 0) apiKey = key;
   if (url.length() > 0) apiBaseUrl = url;
+}
+
+void saveOtaEnabled(bool enabled) {
+  if (enabled == otaEnabled) {
+    return;
+  }
+
+  otaEnabled = enabled;
+
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putBool(KEY_OTA_ENABLED, otaEnabled);
+  prefs.remove(KEY_OTA_LAST_CHECK);
+  prefs.remove(KEY_OTA_LAST_ATTEMPT);
+  prefs.end();
 }
 
 void saveOtaBetaMode(bool enabled) {
@@ -79,6 +95,7 @@ void clearAllSettings() {
   apiBaseUrl = DEFAULT_API_BASE_URL;
   friendlyId = "";
   refreshRate = DEFAULT_REFRESH_RATE;
+  otaEnabled = true;
   otaBetaMode = false;
   savedChannel = 0;
 }

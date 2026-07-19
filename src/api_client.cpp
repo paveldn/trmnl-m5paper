@@ -30,6 +30,7 @@ extern String apiKey;
 extern String apiBaseUrl;
 extern String friendlyId;
 extern int refreshRate;
+extern bool otaEnabled;
 extern bool otaBetaMode;
 extern bool forceOtaOnThisBoot;
 extern int lastWakeTime;
@@ -368,6 +369,11 @@ void fetchAndDisplay(float batteryVoltage) {
   forceOtaOnThisBoot = false;  // Consume one-shot force for this boot
 
   bool otaCheckAllowed = true;
+  if (!otaEnabled) {
+    otaCheckAllowed = false;
+    deviceLog("OTA: disabled in settings\n");
+  }
+
   bool otaExternalPower = isExternalPowerPresent();
   if (batteryVoltage > 0.5 && batteryVoltage < OTA_MIN_BATTERY_VOLTAGE && !otaExternalPower) {
     otaCheckAllowed = false;

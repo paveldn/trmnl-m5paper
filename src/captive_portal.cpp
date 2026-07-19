@@ -12,10 +12,12 @@ extern String configuredPass;
 extern String apiKey;
 extern String apiBaseUrl;
 extern String friendlyId;
+extern bool otaEnabled;
 extern bool otaBetaMode;
 
 extern void saveWiFiSettings(const String& ssid, const String& pass);
 extern void saveServerSettings(const String& key, const String& url);
+extern void saveOtaEnabled(bool enabled);
 extern void saveOtaBetaMode(bool enabled);
 extern void clearAllSettings();
 extern void showSetupScreen(const String& message);
@@ -116,6 +118,13 @@ select{appearance:auto}
 <p class="info">Leave empty to use MAC-based auto-registration, or paste your TRMNL API key</p>
 </div>
 <div class="section">
+<label for="ota_enabled">OTA Firmware Update</label>
+<label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-top:6px">
+<input type="checkbox" id="ota_enabled" name="ota_enabled" style="width:auto" checked onchange="updateOtaControls()">
+Enable OTA firmware updates
+</label>
+</div>
+<div class="section">
 <label for="ota_beta">Firmware Channel</label>
 <label style="display:flex;align-items:center;gap:8px;font-weight:normal;margin-top:6px">
 <input type="checkbox" id="ota_beta" name="ota_beta" style="width:auto">
@@ -136,6 +145,14 @@ function toggleCustomUrl(){
   document.getElementById('customUrlDiv').style.display=
     document.getElementById('server').value==='custom'?'block':'none';
 }
+function updateOtaControls(){
+  var otaEnabled=document.getElementById('ota_enabled').checked;
+  var beta=document.getElementById('ota_beta');
+  beta.disabled=!otaEnabled;
+  if(!otaEnabled){
+    beta.checked=false;
+  }
+}
 document.getElementById('configForm').addEventListener('submit',function(e){
   e.preventDefault();
   var st=document.getElementById('status');
@@ -145,6 +162,7 @@ document.getElementById('configForm').addEventListener('submit',function(e){
     pass:document.getElementById('pass').value,
     url:document.getElementById('server').value==='custom'?document.getElementById('url').value:'https://trmnl.app',
     apikey:document.getElementById('apikey').value,
+    ota_enabled:document.getElementById('ota_enabled').checked,
     ota_beta:document.getElementById('ota_beta').checked
   };
   fetch('/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})
@@ -161,8 +179,12 @@ function resetDevice(){
 }
 
 fetch('/status').then(r=>r.json()).then(s=>{
+  document.getElementById('ota_enabled').checked=(s.ota_enabled!==false);
   document.getElementById('ota_beta').checked=!!s.ota_beta;
+  updateOtaControls();
 }).catch(()=>{});
+
+updateOtaControls();
 </script>
 </body>
 </html>
@@ -203,7 +225,11 @@ static void handlePortalSave() {
   String pass = doc["pass"] | "";
   String url = doc["url"] | DEFAULT_API_BASE_URL_STR;
   String key = doc["apikey"] | "";
+  bool otaEnable = doc["ota_enabled"] | true;
   bool otaBeta = doc["ota_beta"] | false;
+  if (!otaEnable) {
+    otaBeta = false;
+  }
 
   if (ssid.length() == 0) {
     webServer.send(400, "application/json", "{\"success\":false,\"message\":\"SSID required\"}");
@@ -217,6 +243,7 @@ static void handlePortalSave() {
 
   saveWiFiSettings(ssid, pass);
   saveServerSettings(key, url);
+  saveOtaEnabled(otaEnable);
   saveOtaBetaMode(otaBeta);
 
   webServer.send(200, "application/json", "{\"success\":true}");
@@ -232,6 +259,7 @@ static void handlePortalStatus() {
   doc["mac"] = getPortalMacAddress();
   doc["fw"] = FW_VERSION_STR;
   doc["friendly_id"] = friendlyId;
+  doc["ota_enabled"] = otaEnabled;
   doc["ota_beta"] = otaBetaMode;
 
   String json;

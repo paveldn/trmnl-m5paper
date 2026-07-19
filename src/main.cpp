@@ -78,6 +78,7 @@ String apiBaseUrl;
 String friendlyId;
 int refreshRate = DEFAULT_REFRESH_RATE;
 bool forceOtaOnThisBoot = false;
+bool otaEnabled = true;
 bool otaBetaMode = false;
 
 // ─────────────────────────── Log Buffer ───────────────────────────

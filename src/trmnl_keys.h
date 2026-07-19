@@ -14,6 +14,7 @@ inline constexpr const char* KEY_IMAGE_ETAG = "image_etag";
 inline constexpr const char* KEY_IMAGE_LASTMOD = "image_lastmod";
 inline constexpr const char* KEY_OTA_LAST_CHECK = "ota_last_chk";
 inline constexpr const char* KEY_OTA_LAST_ATTEMPT = "ota_last_try";
+inline constexpr const char* KEY_OTA_ENABLED = "ota_enabled";
 inline constexpr const char* KEY_OTA_BETA_MODE = "ota_beta";
 inline constexpr const char* KEY_RTC_SET = "rtc_set";
 inline constexpr const char* KEY_LOG_ID = "log_id";
