@@ -21,6 +21,7 @@ void addDisplayHeaders(HTTPClient& http,
                        bool usbConnected,
                        const String& updateSource,
                        int displayWidth,
-                       int displayHeight);
+                       int displayHeight,
+                       bool specialFunctionActive);
 void addAuthHeaders(HTTPClient& http, const String& macAddress, const String& apiKey);
 void addLogHeaders(HTTPClient& http, const String& macAddress, const String& apiKey);

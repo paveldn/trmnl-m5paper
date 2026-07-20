@@ -18,6 +18,8 @@ extern bool otaEnabled;
 extern bool otaBetaMode;
 extern uint8_t savedChannel;
 
+String specialFunction = "none";
+
 void loadSettings() {
   prefs.begin(NVS_NAMESPACE, true);
   configuredSSID = prefs.getString(KEY_WIFI_SSID, "");
@@ -28,6 +30,7 @@ void loadSettings() {
   refreshRate = prefs.getInt(KEY_REFRESH_RATE, DEFAULT_REFRESH_RATE);
   otaEnabled = prefs.getBool(KEY_OTA_ENABLED, true);
   otaBetaMode = prefs.getBool(KEY_OTA_BETA_MODE, false);
+  specialFunction = prefs.getString(KEY_SPECIAL_FUNCTION, "none");
   prefs.end();
 }
 
@@ -85,6 +88,14 @@ void saveRefreshRate(int rate) {
   refreshRate = rate;
 }
 
+void saveSpecialFunction(const String& sf) {
+  if (sf == specialFunction) return;
+  specialFunction = sf;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString(KEY_SPECIAL_FUNCTION, sf);
+  prefs.end();
+}
+
 void clearAllSettings() {
   prefs.begin(NVS_NAMESPACE, false);
   prefs.clear();
@@ -98,4 +109,5 @@ void clearAllSettings() {
   otaEnabled = true;
   otaBetaMode = false;
   savedChannel = 0;
+  specialFunction = "none";
 }

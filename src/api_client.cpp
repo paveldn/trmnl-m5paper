@@ -36,6 +36,8 @@ extern bool forceOtaOnThisBoot;
 extern int lastWakeTime;
 extern const char* FW_VERSION_STR;
 extern const char* UPDATE_SOURCE_STR;
+extern String specialFunction;
+extern void saveSpecialFunction(const String& sf);
 
 #if defined(DEBUG_LOGS) || defined(ENABLE_SERVER_LOGS)
 extern String logBuffer;
@@ -243,7 +245,7 @@ void registerDevice() {
   }
 }
 
-void fetchAndDisplay(float batteryVoltage) {
+void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
   deviceLog("GET /api/display...\n");
   disableWiFiPS();
   uint8_t batteryLevel = 0;
@@ -286,7 +288,8 @@ void fetchAndDisplay(float batteryVoltage) {
                     isExternalPowerPresent(),
                     UPDATE_SOURCE_STR,
                     DISPLAY_WIDTH,
-                    DISPLAY_HEIGHT);
+                    DISPLAY_HEIGHT,
+                    specialFunctionActive);
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
@@ -362,6 +365,15 @@ void fetchAndDisplay(float batteryVoltage) {
   bool updateFirmware = doc["update_firmware"] | false;
   const char* firmwareUrl = doc["firmware_url"];
   int newRefreshRate = doc["refresh_rate"] | refreshRate;
+
+  // ── Persist special function config sent by server ──
+  {
+    const char* sfStr = doc["special_function"] | "";
+    if (sfStr && strlen(sfStr) > 0 && strcmp(sfStr, "none") != 0) {
+      deviceLog("SF from server: %s\n", sfStr);
+      saveSpecialFunction(String(sfStr));
+    }
+  }
 
   String otaUrl = "";
   String otaVersion = "";

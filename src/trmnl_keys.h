@@ -18,3 +18,4 @@ inline constexpr const char* KEY_OTA_ENABLED = "ota_enabled";
 inline constexpr const char* KEY_OTA_BETA_MODE = "ota_beta";
 inline constexpr const char* KEY_RTC_SET = "rtc_set";
 inline constexpr const char* KEY_LOG_ID = "log_id";
+inline constexpr const char* KEY_SPECIAL_FUNCTION = "special_fn";

@@ -4,4 +4,4 @@
 
 void sendLogs();
 void registerDevice();
-void fetchAndDisplay(float batteryVoltage);
+void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive = false);

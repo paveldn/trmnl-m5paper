@@ -23,7 +23,8 @@ void addDisplayHeaders(HTTPClient& http,
                        bool usbConnected,
                        const String& updateSource,
                        int displayWidth,
-                       int displayHeight) {
+                       int displayHeight,
+                       bool specialFunctionActive) {
   http.addHeader("ID", macAddress);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Update-Source", updateSource);
@@ -44,6 +45,9 @@ void addDisplayHeaders(HTTPClient& http,
   http.addHeader("Temperature-Profile", "true");
   http.addHeader("Width", String(displayWidth));
   http.addHeader("Height", String(displayHeight));
+  if (specialFunctionActive) {
+    http.addHeader("special_function", "true");
+  }
 }
 
 void addAuthHeaders(HTTPClient& http, const String& macAddress, const String& apiKey) {
