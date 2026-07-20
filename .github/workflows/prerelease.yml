@@ -2,13 +2,9 @@ name: Prerelease
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Base version (e.g. 2.6.0)"
-        required: true
 
 concurrency:
-  group: prerelease-${{ github.event.inputs.version }}
+  group: prerelease
   cancel-in-progress: false
 
 jobs:
@@ -35,11 +31,30 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      - name: Read Base Version From platformio.ini
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_version="$(grep -E '^custom_app_version\s*=' platformio.ini | head -n 1 | cut -d'=' -f2 | tr -d '[:space:]')"
+
+          if [[ -z "$base_version" ]]; then
+            echo "platformio.ini env:m5stack_paper.custom_app_version is empty" >&2
+            exit 1
+          fi
+          if [[ ! "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid custom_app_version '$base_version' in platformio.ini (expected x.y.z)" >&2
+            exit 1
+          fi
+
+          echo "base_version=$base_version" >> "$GITHUB_OUTPUT"
+          echo "Using base version: $base_version"
+
       - name: Compute Prerelease Name
         id: naming
         shell: bash
         env:
-          BASE_VERSION: ${{ github.event.inputs.version }}
+          BASE_VERSION: ${{ steps.base.outputs.base_version }}
         run: |
           set -euo pipefail
 
@@ -73,9 +88,9 @@ jobs:
           echo "Using FW_VERSION: ${firmware_version}"
 
       - name: Build
-        env:
-          FW_VERSION_VALUE: ${{ steps.naming.outputs.firmware_version }}
         run: |
+          sed -i -E "s/^custom_app_version\s*=\s*.*/custom_app_version = ${{ steps.naming.outputs.firmware_version }}/" platformio.ini
+          grep -E '^custom_app_version\s*=' platformio.ini
           pio run
 
       - name: Generate Prerelease Notes

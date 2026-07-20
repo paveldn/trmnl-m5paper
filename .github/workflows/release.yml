@@ -2,10 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      version:
-        description: "Release version (e.g. 2.1.0)"
-        required: true
 
 jobs:
   release:
@@ -31,9 +27,26 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
+      - name: Read Version From platformio.ini
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(grep -E '^custom_app_version\s*=' platformio.ini | head -n 1 | cut -d'=' -f2 | tr -d '[:space:]')"
+
+          if [[ -z "$version" ]]; then
+            echo "platformio.ini env:m5stack_paper.custom_app_version is empty" >&2
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid custom_app_version '$version' in platformio.ini (expected x.y.z)" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Using version: $version"
+
       - name: Build
-        env:
-          FW_VERSION_VALUE: ${{ github.event.inputs.version }}
         run: |
           pio run
 
@@ -41,7 +54,7 @@ jobs:
         id: notes
         shell: bash
         env:
-          RELEASE_TAG: v${{ github.event.inputs.version }}
+          RELEASE_TAG: v${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
 
@@ -72,8 +85,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.event.inputs.version }}
-          name: v${{ github.event.inputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
           body_path: release-notes.md
           files: |
             dist/m5paper.bin

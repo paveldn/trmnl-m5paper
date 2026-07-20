@@ -112,7 +112,7 @@ Use the manual workflow:
 - .github/workflows/prerelease.yml
 
 How it works:
-- Input base version (for example 2.6.0).
+- Base version is read from `platformio.ini` (`custom_app_version`, for example 2.6.0).
 - Workflow scans existing tags matching v2.6.0-beta.N.
 - It picks the next available N automatically and creates a GitHub prerelease.
 
@@ -142,7 +142,7 @@ The pre-build script also reports why fallback was used:
 - GitHub origin present but owner/repo could not be parsed.
 
 Release workflow note:
-- `.github/workflows/release.yml` publishes `dist/m5paper.bin` so OTA can select a stable, device-specific asset name.
+- `.github/workflows/release.yml` reads version from `platformio.ini` (`custom_app_version`) and publishes `dist/m5paper.bin` so OTA can select a stable, device-specific asset name.
 
 Compatibility / Notes
 - The firmware follows official TRMNL header and API behavior: it sends `ID` and `Access-Token` headers and includes a `Wake-Time` header for statistics.
