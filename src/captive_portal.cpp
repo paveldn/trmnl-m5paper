@@ -6,6 +6,9 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 
+#include <algorithm>
+#include <vector>
+
 // ─────────────────────────── External references ───────────────────────────
 extern String configuredSSID;
 extern String configuredPass;
@@ -32,6 +35,7 @@ extern const char* DEFAULT_API_BASE_URL_STR;
 static WebServer webServer(80);
 static DNSServer dnsServer;
 static bool portalActive = false;
+static String wifiNetworkOptionsHtml;
 
 static const int DNS_PORT = 53;
 
@@ -62,6 +66,80 @@ static String getPortalMacAddress() {
            (uint8_t)(chipMac >> 8),
            (uint8_t)chipMac);
   return String(buf);
+}
+
+static String escapeHtml(const String& value) {
+  String escaped;
+  escaped.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); ++i) {
+    char c = value[i];
+    switch (c) {
+      case '&': escaped += F("&amp;"); break;
+      case '<': escaped += F("&lt;"); break;
+      case '>': escaped += F("&gt;"); break;
+      case '"': escaped += F("&quot;"); break;
+      case '\'': escaped += F("&#39;"); break;
+      default: escaped += c; break;
+    }
+  }
+  return escaped;
+}
+
+struct WifiNetworkOption {
+  String ssid;
+  int32_t rssi;
+};
+
+static void refreshWifiNetworkOptions() {
+  wifiNetworkOptionsHtml =
+      F("<option value=\"__manual__\">Enter network manually</option>");
+
+  WiFi.scanDelete();
+  int networkCount = WiFi.scanNetworks();
+  if (networkCount <= 0) {
+    wifiNetworkOptionsHtml +=
+        F("<option value=\"\" disabled>No WiFi networks found</option>");
+    return;
+  }
+
+  std::vector<WifiNetworkOption> networks;
+  networks.reserve(networkCount);
+
+  for (int i = 0; i < networkCount; ++i) {
+    String ssid = WiFi.SSID(i);
+    if (ssid.length() == 0) {
+      continue;
+    }
+
+    int32_t rssi = WiFi.RSSI(i);
+    bool merged = false;
+    for (auto& network : networks) {
+      if (network.ssid == ssid) {
+        if (rssi > network.rssi) {
+          network.rssi = rssi;
+        }
+        merged = true;
+        break;
+      }
+    }
+
+    if (!merged) {
+      networks.push_back({ssid, rssi});
+    }
+  }
+
+  std::sort(networks.begin(), networks.end(), [](const WifiNetworkOption& left, const WifiNetworkOption& right) {
+    if (left.rssi != right.rssi) {
+      return left.rssi > right.rssi;
+    }
+    return left.ssid < right.ssid;
+  });
+
+  for (const auto& network : networks) {
+    wifiNetworkOptionsHtml +=
+        "<option value=\"" + escapeHtml(network.ssid) + "\">" +
+        escapeHtml(network.ssid) + " (" + String(network.rssi) + " dBm)</option>";
+  }
 }
 
 // ─────────────────────────── HTML ───────────────────────────
@@ -97,7 +175,10 @@ select{appearance:auto}
 <h2>Device Configuration</h2>
 <form id="configForm">
 <label for="ssid">WiFi Network</label>
-<input type="text" id="ssid" name="ssid" placeholder="Network name" required>
+<select id="ssidSelect" name="ssidSelect" onchange="toggleManualSsid()" required>
+%SSID_OPTIONS%
+</select>
+<input type="text" id="ssidManual" name="ssid" placeholder="Network name" style="margin-top:8px;display:none">
 <label for="pass">WiFi Password</label>
 <input type="password" id="pass" name="pass" placeholder="Password">
 <div class="section">
@@ -145,6 +226,16 @@ function toggleCustomUrl(){
   document.getElementById('customUrlDiv').style.display=
     document.getElementById('server').value==='custom'?'block':'none';
 }
+function toggleManualSsid(){
+  var select=document.getElementById('ssidSelect');
+  var manual=document.getElementById('ssidManual');
+  var isManual=select.value==='__manual__';
+  manual.style.display=isManual?'block':'none';
+  manual.required=isManual;
+  if(!isManual){
+    manual.value=select.value;
+  }
+}
 function updateOtaControls(){
   var otaEnabled=document.getElementById('ota_enabled').checked;
   var beta=document.getElementById('ota_beta');
@@ -157,8 +248,11 @@ document.getElementById('configForm').addEventListener('submit',function(e){
   e.preventDefault();
   var st=document.getElementById('status');
   st.className='status';st.style.display='none';
+  var select=document.getElementById('ssidSelect');
+  var manual=document.getElementById('ssidManual');
+  var ssidValue=select.value==='__manual__'?manual.value:select.value;
   var data={
-    ssid:document.getElementById('ssid').value,
+    ssid:ssidValue,
     pass:document.getElementById('pass').value,
     url:document.getElementById('server').value==='custom'?document.getElementById('url').value:'https://trmnl.app',
     apikey:document.getElementById('apikey').value,
@@ -178,6 +272,8 @@ function resetDevice(){
   }
 }
 
+toggleManualSsid();
+
 fetch('/status').then(r=>r.json()).then(s=>{
   document.getElementById('ota_enabled').checked=(s.ota_enabled!==false);
   document.getElementById('ota_beta').checked=!!s.ota_beta;
@@ -195,6 +291,7 @@ static void handlePortalRoot() {
   String html = String(PORTAL_HTML);
   html.replace("%MAC%", getPortalMacAddress());
   html.replace("%FW%", FW_VERSION_STR);
+  html.replace("%SSID_OPTIONS%", wifiNetworkOptionsHtml);
   webServer.send(200, "text/html", html);
 }
 
@@ -282,9 +379,11 @@ void startCaptivePortal() {
   showSetupScreen("Connect to WiFi:\nM5Paper-TRMNL\nThen open: 192.168.4.1");
 
   // Start AP
-  WiFi.mode(WIFI_AP);
+  WiFi.mode(WIFI_AP_STA);
   WiFi.softAP("M5Paper-TRMNL", "");  // Open network for easy setup
   delay(100);
+
+  refreshWifiNetworkOptions();
 
 #ifdef DEBUG_LOGS
   Serial.printf("AP IP: %s\n", WiFi.softAPIP().toString().c_str());
