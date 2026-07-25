@@ -7,8 +7,9 @@
 #include "trmnl_keys.h"
 
 static const int M5PAPER_WAKE_BUTTON = 39;
-static const int BUTTON_HOLD_TIME = 5000;
-static const int BUTTON_FACTORY_RESET = 15000;
+static const int BUTTON_MEDIUM_TIME    = 1000;  // 1s  — medium press (special function)
+static const int BUTTON_HOLD_TIME      = 6000;  // 6s  — long press (WiFi clear)
+static const int BUTTON_FACTORY_RESET  = 16000; // 16s — longest press (factory reset / soft reset)
 
 extern Preferences prefs;
 extern void deviceLog(const char* fmt, ...);
@@ -91,4 +92,34 @@ void checkRuntimeReset() {
       return;
     }
   }
+}
+
+// Detect the type of button press that woke the device from deep sleep.
+// Call this only when wakeup cause is ESP_SLEEP_WAKEUP_EXT1.
+//
+// If the button is already released: short CLICK (advance playlist).
+// If still held, measures duration and classifies as:
+//   MEDIUM  (1–2 s)  → special function (server-configured)
+//   LONG    (6–7 s)  → WiFi credentials clear
+//   LONGEST (16+ s)  → factory reset / soft reset
+WakePress detectButtonWakePress() {
+  pinMode(M5PAPER_WAKE_BUTTON, INPUT);
+
+  // Button already released before firmware started → was a short click
+  if (digitalRead(M5PAPER_WAKE_BUTTON) == HIGH) {
+    return WakePress::CLICK;
+  }
+
+  // Button still held — measure how long it stays LOW
+  unsigned long start = millis();
+  while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+    if (millis() - start >= (unsigned long)BUTTON_FACTORY_RESET) break;
+    delay(10);
+  }
+  unsigned long held = millis() - start;
+
+  if (held >= (unsigned long)BUTTON_FACTORY_RESET) return WakePress::LONGEST;
+  if (held >= (unsigned long)BUTTON_HOLD_TIME)     return WakePress::LONG;
+  if (held >= (unsigned long)BUTTON_MEDIUM_TIME)   return WakePress::MEDIUM;
+  return WakePress::CLICK;
 }

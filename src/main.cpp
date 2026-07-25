@@ -116,7 +116,7 @@ const char* FW_VERSION_STR = FW_VERSION;
 int DEFAULT_REFRESH_RATE_VAL = DEFAULT_REFRESH_RATE;
 int WIFI_AP_TIMEOUT_VAL = WIFI_AP_TIMEOUT;
 const char* DEFAULT_API_BASE_URL_STR = DEFAULT_API_BASE_URL;
-const char* UPDATE_SOURCE_STR = "m5paper";
+const char* UPDATE_SOURCE_STR = "COLD";  // set dynamically in setup() from wake reason
 
 // ─────────────────────────── Forward Declarations ───────────────────────────
 void invalidateImageCache(const char* reason = nullptr);
@@ -138,7 +138,8 @@ void setup() {
   esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
   const char* wakeStr = "COLD";
   if (wakeup == ESP_SLEEP_WAKEUP_TIMER) wakeStr = "TIMER";
-  else if (wakeup == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "BUTTON";
+  else if (wakeup == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "EXT1";
+  UPDATE_SOURCE_STR = wakeStr;  // server uses this to detect button wakes for playlist advance
   bool coldBoot = (wakeup == ESP_SLEEP_WAKEUP_UNDEFINED);
 
 #ifdef FORCE_OTA_ON_NEXT_BOOT
@@ -176,7 +177,53 @@ void setup() {
   btStop();
 
   canvas.createSprite(DISPLAY_WIDTH, DISPLAY_HEIGHT);
-  if (handleBootButtonReset()) return;
+
+  // ── Load settings early (needed before button wake detection for SF lookup) ──
+  loadSettings();
+
+  // ── Button handling ──
+  bool isSpecialFunction = false;
+  if (wakeup == ESP_SLEEP_WAKEUP_EXT1) {
+    // Button wakeup: classify press type using TRMNL timing
+    WakePress press = detectButtonWakePress();
+    switch (press) {
+      case WakePress::LONGEST:
+        deviceLog("Button: longest press (16s) → factory reset\n");
+        prefs.begin(NVS_NAMESPACE, false);
+        prefs.clear();
+        prefs.end();
+        showErrorScreen("Factory Reset\n\nAll settings cleared\nRestarting...");
+        delay(2000);
+        ESP.restart();
+        return;
+      case WakePress::LONG:
+        deviceLog("Button: long press (6s) → WiFi clear\n");
+        prefs.begin(NVS_NAMESPACE, false);
+        prefs.remove(KEY_WIFI_SSID);
+        prefs.remove(KEY_WIFI_PASS);
+        prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
+        prefs.end();
+        showSetupScreen("WiFi cleared\n\nRestarting...");
+        delay(1000);
+        ESP.restart();
+        return;
+      case WakePress::MEDIUM:
+        deviceLog("Button: medium press → special function: %s\n", specialFunction.c_str());
+        if (specialFunction == "add_wifi") {
+          showSetupScreen("Opening WiFi Setup...\nM5Paper-TRMNL\n192.168.4.1");
+          startCaptivePortal();
+          return;
+        }
+        isSpecialFunction = true;  // Let server execute other SFs via header
+        break;
+      case WakePress::CLICK:
+      default:
+        deviceLog("Button: click → advance playlist\n");
+        break;
+    }
+  } else {
+    if (handleBootButtonReset()) return;
+  }
 
   // ── Low battery protection (averaged read to avoid ADC transients) ──
   float bootVoltage = getBatteryVoltage();
@@ -189,8 +236,6 @@ void setup() {
     deviceLog("LOW BATTERY ignored on external power: %.2fV\n", bootVoltage);
   }
 
-  // ── Load settings from NVS ──
-  loadSettings();
   deviceLog("Refresh: %ds\n", refreshRate);
 
   // ── Check if WiFi is configured ──
@@ -221,7 +266,7 @@ void setup() {
 
   // ── Ping server (fetch display) ──
   float batteryVoltage = getBatteryVoltage();
-  fetchAndDisplay(batteryVoltage);
+  fetchAndDisplay(batteryVoltage, isSpecialFunction);
 
   // Safety net: setup should never fall through to loop() in normal operation.
   // If it does, go to sleep instead of spinning at full speed.
