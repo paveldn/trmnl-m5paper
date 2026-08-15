@@ -50,6 +50,10 @@ It cannot reliably distinguish the M5Paper from every other board using the
 original ESP32 chip, so the installer also requires an explicit model
 confirmation.
 
+The version shown on the installer page is loaded at runtime from the same
+generated manifest used for flashing. The manifest version is derived from
+`platformio.ini`, so the displayed and installed versions cannot drift apart.
+
 The installer uses the complete factory image, so it works on a blank device as
 well as one that has already been flashed. A browser installation erases
 existing device settings for a clean setup; normal automatic OTA updates do not.
