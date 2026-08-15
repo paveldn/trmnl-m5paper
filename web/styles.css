@@ -81,9 +81,9 @@ main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   column-gap: clamp(48px, 9vw, 128px);
-  align-items: center;
+  align-items: start;
   min-height: 650px;
-  padding: 80px 0;
+  padding: 24px 0 80px;
 }
 
 .hero-copy {
@@ -494,7 +494,7 @@ footer a {
   }
 
   .hero {
-    padding: 60px 0 72px;
+    padding: 24px 0 72px;
   }
 
   h1 {
