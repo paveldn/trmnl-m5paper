@@ -53,24 +53,21 @@
             </div>
           </div>
 
-          <label class="model-confirmation" for="model-confirmation">
-            <input id="model-confirmation" type="checkbox" />
-            <span>
-              <strong>Confirm your model</strong>
-              <span>
-                I have an M5Paper or M5Paper v1.1 (K049 or K049-B) with the
-                original ESP32 chip.
-              </span>
-            </span>
-          </label>
+          <div id="model-compatibility" class="model-warning" role="note">
+            <strong>Check your model before installing</strong>
+            <p>
+              This firmware is only for M5Paper K049 and K049-B. PaperS3 and
+              M5Paper Color are rejected automatically because they use an
+              ESP32-S3 chip. CoreInk and other original-ESP32 boards cannot be
+              identified automatically, so verify the model label first.
+            </p>
+          </div>
 
           <esp-web-install-button manifest="manifest.json">
             <button
-              id="install-button"
               class="install-button"
               slot="activate"
               type="button"
-              disabled
               aria-describedby="model-compatibility"
             >
               Connect &amp; install
@@ -84,11 +81,8 @@
             </p>
           </esp-web-install-button>
 
-          <p id="model-compatibility" class="safety-note">
-            Not compatible with PaperS3, M5Paper Color, or CoreInk. The flasher
-            automatically rejects ESP32-S3 devices, but it cannot distinguish
-            every board that uses the original ESP32 chip. Keep the USB cable
-            connected until installation completes.
+          <p class="safety-note">
+            Keep the USB cable connected until installation completes.
           </p>
         </div>
       </section>
