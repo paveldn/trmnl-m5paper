@@ -101,7 +101,7 @@ main {
 
 h1 {
   max-width: 700px;
-  margin: 22px 0 24px;
+  margin: 10px 0 24px;
   font-size: clamp(3.25rem, 6.7vw, 6.7rem);
   font-weight: 840;
   letter-spacing: -0.07em;
