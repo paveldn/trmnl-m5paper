@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f2efe6" />
+    <meta
+      name="description"
+      content="Install TRMNL firmware on an M5Paper directly from a supported browser."
+    />
+    <title>TRMNL for M5Paper — Web Installer</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="stylesheet" href="styles.css" />
+    <script
+      type="module"
+      src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
+    ></script>
+  </head>
+  <body>
+    <main>
+      <header class="masthead">
+        <a
+          class="wordmark"
+          href="https://github.com/paveldn/trmnl-m5paper"
+          aria-label="TRMNL M5Paper repository"
+        >
+          TRMNL <span>/</span> M5PAPER
+        </a>
+        <span class="status"><i aria-hidden="true"></i> WEB FLASHER</span>
+      </header>
+
+      <section class="hero" aria-labelledby="page-title">
+        <div class="eyebrow">M5PAPER FIRMWARE INSTALLER</div>
+        <h1 id="page-title">Turn your M5Paper into a TRMNL display.</h1>
+        <p class="lede">
+          Connect with USB, flash from this page, then finish setup over the
+          device’s temporary Wi-Fi network. No desktop flashing tools required.
+        </p>
+
+        <div class="installer-panel">
+          <div class="device-check">
+            <span class="device-icon" aria-hidden="true"></span>
+            <div>
+              <strong>Target device</strong>
+              <span>M5Stack M5Paper · ESP32</span>
+            </div>
+          </div>
+
+          <esp-web-install-button manifest="manifest.json">
+            <button class="install-button" slot="activate">
+              Connect &amp; install
+            </button>
+            <p class="browser-warning" slot="unsupported">
+              Open this page in desktop Chrome or Edge to use Web Serial.
+            </p>
+            <p class="browser-warning" slot="not-allowed">
+              Browser access to the serial port was blocked. Reload the page
+              and allow the connection when prompted.
+            </p>
+          </esp-web-install-button>
+
+          <p class="safety-note">
+            For M5Paper only. Keep the USB cable connected until the installer
+            reports that flashing is complete.
+          </p>
+        </div>
+      </section>
+
+      <section class="steps" aria-labelledby="steps-title">
+        <div class="section-heading">
+          <span>QUICK START</span>
+          <h2 id="steps-title">Three steps, then it runs on its own.</h2>
+        </div>
+
+        <ol>
+          <li>
+            <span class="number">01</span>
+            <div>
+              <h3>Connect</h3>
+              <p>
+                Use a data-capable USB-C cable, power on the M5Paper, and close
+                any serial monitor that is using it.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="number">02</span>
+            <div>
+              <h3>Install</h3>
+              <p>
+                Select <em>Connect &amp; install</em>, choose the M5Paper serial
+                port, and follow the prompts. Installing erases old device
+                settings so the new firmware starts cleanly.
+              </p>
+            </div>
+          </li>
+          <li>
+            <span class="number">03</span>
+            <div>
+              <h3>Configure</h3>
+              <p>
+                Join the <code>TRMNL-XXXX</code> Wi-Fi network and enter your
+                Wi-Fi details and TRMNL API key in the setup page.
+              </p>
+            </div>
+          </li>
+        </ol>
+      </section>
+
+      <footer>
+        <p>Open-source firmware for the M5Stack M5Paper.</p>
+        <a href="https://github.com/paveldn/trmnl-m5paper">
+          View source &amp; documentation →
+        </a>
+      </footer>
+    </main>
+  </body>
+</html>

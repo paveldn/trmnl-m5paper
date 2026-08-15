@@ -32,6 +32,24 @@ pio run              # build
 pio run -t upload    # flash via USB
 ```
 
+## Flash From Your Browser
+
+Use the [M5Paper web installer](https://paveldn.github.io/trmnl-m5paper/) to
+flash the complete firmware from desktop Chrome or Edge:
+
+1. Connect the M5Paper with a data-capable USB-C cable and power it on.
+2. Click **Connect & install**, then select its serial port.
+3. Keep the cable connected until flashing completes.
+4. Join the `TRMNL-XXXX` WiFi network and complete the setup page.
+
+The installer uses the complete factory image, so it works on a blank device as
+well as one that has already been flashed. A browser installation erases
+existing device settings for a clean setup; normal automatic OTA updates do not.
+
+Repository maintainers must select **GitHub Actions** once under
+**Settings → Pages → Build and deployment → Source**. The Browser Flasher
+workflow then rebuilds and publishes the installer on each push to `main`.
+
 ### Logging Flags
 
 Logging controls are split between server log submission and serial debug output:
