@@ -81,6 +81,7 @@ jobs:
         run: |
           mkdir -p dist
           cp .pio/build/m5stack_paper/firmware.bin dist/m5paper.bin
+          cp .pio/build/m5stack_paper/firmware.factory.bin dist/m5paper.factory.bin
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -90,3 +91,4 @@ jobs:
           body_path: release-notes.md
           files: |
             dist/m5paper.bin
+            dist/m5paper.factory.bin
