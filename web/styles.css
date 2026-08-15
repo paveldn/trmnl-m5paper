@@ -116,6 +116,19 @@ h1 {
   line-height: 1.55;
 }
 
+.hero-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin-top: 18px;
+}
+
+.hero-links a {
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-underline-offset: 4px;
+}
+
 .installer-panel {
   position: relative;
   padding: 28px;
@@ -295,7 +308,7 @@ a:focus-visible {
 
 .hardware-drawing {
   position: relative;
-  margin: 36px 0 0;
+  margin: 28px 0 0;
   overflow: hidden;
   border: 1px solid var(--ink);
   background: #fff;
@@ -421,6 +434,11 @@ footer {
 
 footer p {
   margin: 0;
+}
+
+.project-credit {
+  display: grid;
+  gap: 6px;
 }
 
 footer a {
