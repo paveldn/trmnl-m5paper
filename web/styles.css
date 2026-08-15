@@ -177,10 +177,36 @@ h1 {
   text-transform: uppercase;
 }
 
-.device-check div span {
+.device-model {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.78rem;
+}
+
+.firmware-version {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+}
+
+.firmware-version span {
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.firmware-version output {
+  padding: 3px 7px;
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 800;
+}
+
+.firmware-version output[data-state="error"] {
+  background: var(--paper-deep);
+  color: var(--muted);
 }
 
 esp-web-install-button {

@@ -41,9 +41,15 @@
         <div class="installer-panel">
           <div class="device-check">
             <span class="device-icon" aria-hidden="true"></span>
-            <div>
+            <div class="device-details">
               <strong>Target device</strong>
-              <span>M5Paper K049 / K049-B · ESP32</span>
+              <span class="device-model">M5Paper K049 / K049-B · ESP32</span>
+              <div class="firmware-version">
+                <span>Version to install</span>
+                <output id="firmware-version" aria-live="polite">
+                  Loading version…
+                </output>
+              </div>
             </div>
           </div>
 
