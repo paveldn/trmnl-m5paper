@@ -214,36 +214,25 @@ esp-web-install-button {
   margin-top: 24px;
 }
 
-.model-confirmation {
-  display: grid;
-  grid-template-columns: 20px 1fr;
-  gap: 12px;
-  align-items: start;
+.model-warning {
   margin-top: 24px;
-  cursor: pointer;
+  padding: 14px 16px;
+  border-left: 4px solid var(--accent);
+  background: var(--paper-deep);
 }
 
-.model-confirmation input {
-  width: 18px;
-  height: 18px;
-  margin: 2px 0 0;
-  accent-color: var(--accent);
-}
-
-.model-confirmation strong,
-.model-confirmation span span {
+.model-warning strong {
   display: block;
-}
-
-.model-confirmation strong {
-  margin-bottom: 4px;
   font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.model-confirmation span span {
+.model-warning p {
+  margin: 6px 0 0;
   color: var(--muted);
   font-size: 0.78rem;
-  line-height: 1.45;
+  line-height: 1.5;
 }
 
 .install-button {
@@ -276,7 +265,6 @@ esp-web-install-button {
 }
 
 .install-button:focus-visible,
-.model-confirmation input:focus-visible,
 a:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 4px;

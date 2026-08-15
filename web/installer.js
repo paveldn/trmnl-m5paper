@@ -1,11 +1,5 @@
-const modelConfirmation = document.querySelector("#model-confirmation");
-const installButton = document.querySelector("#install-button");
 const webInstaller = document.querySelector("esp-web-install-button");
 const firmwareVersion = document.querySelector("#firmware-version");
-
-function updateInstallButton() {
-  installButton.disabled = !modelConfirmation.checked;
-}
 
 async function loadFirmwareVersion() {
   try {
@@ -32,6 +26,4 @@ async function loadFirmwareVersion() {
   }
 }
 
-modelConfirmation.addEventListener("change", updateInstallButton);
-updateInstallButton();
 loadFirmwareVersion();
