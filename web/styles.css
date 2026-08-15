@@ -356,7 +356,7 @@ a:focus-visible {
 }
 
 .steps {
-  padding: 84px 0 100px;
+  padding: 48px 0 100px;
   border-top: 1px solid var(--line);
 }
 
@@ -517,7 +517,7 @@ footer a {
   }
 
   .steps {
-    padding: 64px 0 72px;
+    padding: 44px 0 72px;
   }
 
   footer {
