@@ -38,9 +38,17 @@ Use the [M5Paper web installer](https://paveldn.github.io/trmnl-m5paper/) to
 flash the complete firmware from desktop Chrome or Edge:
 
 1. Connect the M5Paper with a data-capable USB-C cable and power it on.
-2. Click **Connect & install**, then select its serial port.
-3. Keep the cable connected until flashing completes.
-4. Join the `TRMNL-XXXX` WiFi network and complete the setup page.
+2. Confirm that it is an M5Paper or M5Paper v1.1 (SKU K049 or K049-B) with the
+   original ESP32 chip.
+3. Click **Connect & install**, then select its serial port.
+4. Keep the cable connected until flashing completes.
+5. Join the `TRMNL-XXXX` WiFi network and complete the setup page.
+
+PaperS3, M5Paper Color, and CoreInk are not supported. ESP Web Tools checks the
+chip family before flashing and will reject ESP32-S3 successors automatically.
+It cannot reliably distinguish the M5Paper from every other board using the
+original ESP32 chip, so the installer also requires an explicit model
+confirmation.
 
 The installer uses the complete factory image, so it works on a blank device as
 well as one that has already been flashed. A browser installation erases

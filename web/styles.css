@@ -188,6 +188,38 @@ esp-web-install-button {
   margin-top: 24px;
 }
 
+.model-confirmation {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 12px;
+  align-items: start;
+  margin-top: 24px;
+  cursor: pointer;
+}
+
+.model-confirmation input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.model-confirmation strong,
+.model-confirmation span span {
+  display: block;
+}
+
+.model-confirmation strong {
+  margin-bottom: 4px;
+  font-size: 0.82rem;
+}
+
+.model-confirmation span span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
 .install-button {
   width: 100%;
   min-height: 58px;
@@ -209,7 +241,16 @@ esp-web-install-button {
   transform: translateY(-2px);
 }
 
+.install-button:disabled {
+  border-color: var(--line);
+  background: var(--paper-deep);
+  color: var(--muted);
+  cursor: not-allowed;
+  transform: none;
+}
+
 .install-button:focus-visible,
+.model-confirmation input:focus-visible,
 a:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 4px;

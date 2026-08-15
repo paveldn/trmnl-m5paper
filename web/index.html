@@ -11,6 +11,7 @@
     <title>TRMNL for M5Paper — Web Installer</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="installer.js"></script>
     <script
       type="module"
       src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"
@@ -42,12 +43,30 @@
             <span class="device-icon" aria-hidden="true"></span>
             <div>
               <strong>Target device</strong>
-              <span>M5Stack M5Paper · ESP32</span>
+              <span>M5Paper K049 / K049-B · ESP32</span>
             </div>
           </div>
 
+          <label class="model-confirmation" for="model-confirmation">
+            <input id="model-confirmation" type="checkbox" />
+            <span>
+              <strong>Confirm your model</strong>
+              <span>
+                I have an M5Paper or M5Paper v1.1 (K049 or K049-B) with the
+                original ESP32 chip.
+              </span>
+            </span>
+          </label>
+
           <esp-web-install-button manifest="manifest.json">
-            <button class="install-button" slot="activate">
+            <button
+              id="install-button"
+              class="install-button"
+              slot="activate"
+              type="button"
+              disabled
+              aria-describedby="model-compatibility"
+            >
               Connect &amp; install
             </button>
             <p class="browser-warning" slot="unsupported">
@@ -59,9 +78,11 @@
             </p>
           </esp-web-install-button>
 
-          <p class="safety-note">
-            For M5Paper only. Keep the USB cable connected until the installer
-            reports that flashing is complete.
+          <p id="model-compatibility" class="safety-note">
+            Not compatible with PaperS3, M5Paper Color, or CoreInk. The flasher
+            automatically rejects ESP32-S3 devices, but it cannot distinguish
+            every board that uses the original ESP32 chip. Keep the USB cable
+            connected until installation completes.
           </p>
         </div>
       </section>

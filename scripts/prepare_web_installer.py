@@ -54,7 +54,7 @@ def prepare(output: Path, firmware: Path) -> None:
         )
 
     output.mkdir(parents=True, exist_ok=True)
-    for asset in ("index.html", "styles.css"):
+    for asset in ("index.html", "installer.js", "styles.css"):
         shutil.copy2(WEB_SOURCE / asset, output / asset)
 
     shutil.copy2(firmware, output / "m5paper.factory.bin")
