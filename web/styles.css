@@ -141,28 +141,31 @@ h1 {
 .device-icon {
   position: relative;
   display: block;
-  width: 56px;
-  height: 66px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 70px;
   border: 2px solid var(--ink);
   border-radius: 5px;
+  background: var(--paper-deep);
 }
 
 .device-icon::before {
   position: absolute;
-  inset: 8px 7px 16px;
+  inset: 4px 3px 5px;
   border: 1px solid var(--ink);
-  background: var(--paper-deep);
+  background: var(--paper);
   content: "";
 }
 
 .device-icon::after {
   position: absolute;
-  bottom: 6px;
-  left: 22px;
-  width: 8px;
-  height: 4px;
-  border: 1px solid var(--ink);
+  right: 5px;
+  bottom: 1px;
+  width: 10px;
+  height: 2px;
+  background: var(--ink);
   content: "";
+  transform: skewX(-35deg);
 }
 
 .device-check strong,
@@ -286,6 +289,55 @@ a:focus-visible {
   line-height: 1.5;
 }
 
+.hardware-drawing {
+  position: relative;
+  margin: 0 0 100px;
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  background: #fff;
+}
+
+.hardware-drawing::before {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 8px 12px;
+  background: var(--ink);
+  color: var(--paper);
+  content: "MECHANICAL REFERENCE · K049";
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+}
+
+.hardware-drawing img {
+  display: block;
+  width: 100%;
+  height: 340px;
+  object-fit: cover;
+  object-position: center 48%;
+  filter: grayscale(1) contrast(1.1);
+}
+
+.hardware-drawing figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.hardware-drawing figcaption a {
+  color: var(--muted);
+  text-underline-offset: 3px;
+}
+
 .steps {
   padding: 84px 0 100px;
   border-top: 1px solid var(--line);
@@ -384,6 +436,10 @@ footer a {
     width: min(100%, 520px);
   }
 
+  .hardware-drawing img {
+    height: 300px;
+  }
+
   .section-heading {
     grid-template-columns: 1fr;
   }
@@ -430,6 +486,20 @@ footer a {
   .installer-panel {
     padding: 22px;
     box-shadow: 7px 7px 0 var(--paper-deep);
+  }
+
+  .hardware-drawing {
+    margin-bottom: 72px;
+  }
+
+  .hardware-drawing img {
+    height: 260px;
+    object-position: 35% 48%;
+  }
+
+  .hardware-drawing figcaption {
+    flex-direction: column;
+    gap: 6px;
   }
 
   .steps {
