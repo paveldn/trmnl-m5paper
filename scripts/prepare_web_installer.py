@@ -53,9 +53,7 @@ def prepare(output: Path, firmware: Path) -> None:
             f"Factory image not found at {firmware}. Run `pio run` first."
         )
 
-    output.mkdir(parents=True, exist_ok=True)
-    for asset in ("index.html", "installer.js", "styles.css"):
-        shutil.copy2(WEB_SOURCE / asset, output / asset)
+    shutil.copytree(WEB_SOURCE, output, dirs_exist_ok=True)
 
     shutil.copy2(firmware, output / "m5paper.factory.bin")
     manifest = build_manifest(read_firmware_version())
