@@ -5,7 +5,12 @@
 
 #include "trmnl_keys.h"
 
-static const int WIFI_CONNECT_TIMEOUT = 20000;
+static const int WIFI_CONNECT_TIMEOUT = 25000;
+static const int WIFI_FAST_CONNECT_TIMEOUT = 8000;
+static const int WIFI_DISCONNECT_SETTLE_MS = 300;
+static const int WIFI_RETRY_1 = 60;
+static const int WIFI_RETRY_2 = 180;
+static const int WIFI_RETRY_3 = 300;
 static const int API_RETRY_1 = 15;
 static const int API_RETRY_2 = 30;
 static const int API_RETRY_3 = 60;
@@ -38,7 +43,7 @@ bool connectWiFi() {
     WiFi.begin(configuredSSID.c_str(), configuredPass.c_str(), savedChannel, savedBSSID, true);
 
     unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start <= 5000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - start <= WIFI_FAST_CONNECT_TIMEOUT) {
       delay(250);
     }
 
@@ -49,13 +54,18 @@ bool connectWiFi() {
       savedChannel = 0;
       memset(savedBSSID, 0, 6);
       WiFi.disconnect(true);
-      delay(10);
+      delay(WIFI_DISCONNECT_SETTLE_MS);
       fastConnect = false;
     }
   }
 
   if (!connected) {
     deviceLog("WiFi: full scan connect\n");
+    // Scan every channel and pick the strongest matching AP, rather than
+    // stopping at the first match — important when the SSID is broadcast
+    // by more than one AP (mesh/extenders) or the AP has changed channel.
+    WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+    WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
     if (configuredPass.length() > 0) {
       WiFi.begin(configuredSSID.c_str(), configuredPass.c_str());
     } else {
@@ -98,13 +108,31 @@ void wifiErrorSleep() {
   wifiFailCount++;
 
   prefs.begin(NVS_NAMESPACE, false);
-  prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
+  int retryCount = prefs.getInt(KEY_WIFI_RETRY_COUNT, 1);
+
+  int sleepTime;
+  switch (retryCount) {
+    case 1: sleepTime = WIFI_RETRY_1; break;
+    case 2: sleepTime = WIFI_RETRY_2; break;
+    case 3: sleepTime = WIFI_RETRY_3; break;
+    default:
+      // Max short retries — fall back to normal refresh rate
+      prefs.putInt(KEY_WIFI_RETRY_COUNT, 1);
+      prefs.end();
+      deviceLog("WiFi max retries — sleeping normal rate %ds\n", refreshRate);
+      showErrorScreen("Can't connect to WiFi\n" + configuredSSID + "\n\nRetrying in " + String(refreshRate) + "s");
+      checkRuntimeReset();
+      goToDeepSleep(refreshRate);
+      return;
+  }
+
+  deviceLog("WiFi retry #%d, sleeping %ds\n", retryCount, sleepTime);
+  prefs.putInt(KEY_WIFI_RETRY_COUNT, retryCount + 1);
   prefs.end();
 
-  deviceLog("WiFi unreachable after fast reconnect and full scan - sleeping %ds\n", refreshRate);
-  showErrorScreen("Can't connect to WiFi\n" + configuredSSID + "\n\nRetrying in " + String(refreshRate) + "s");
+  showErrorScreen("Can't connect to WiFi\n" + configuredSSID + "\n\nRetrying in " + String(sleepTime) + "s");
   checkRuntimeReset();
-  goToDeepSleep(refreshRate);
+  goToDeepSleep(sleepTime);
 }
 
 void apiErrorSleep() {
