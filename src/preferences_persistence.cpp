@@ -1,11 +1,14 @@
 #include "preferences_persistence.h"
 
 #include <Preferences.h>
+#include <algorithm>
 
 #include "trmnl_keys.h"
 
 static const char* DEFAULT_API_BASE_URL = "https://trmnl.app";
 static const int DEFAULT_REFRESH_RATE = 900;
+static const int MIN_REFRESH_RATE = 15;
+static const int MAX_REFRESH_RATE = 86400;
 
 extern Preferences prefs;
 extern String configuredSSID;
@@ -27,7 +30,11 @@ void loadSettings() {
   apiKey = prefs.getString(KEY_API_KEY, "");
   apiBaseUrl = prefs.getString(KEY_API_URL, DEFAULT_API_BASE_URL);
   friendlyId = prefs.getString(KEY_FRIENDLY_ID, "");
-  refreshRate = prefs.getInt(KEY_REFRESH_RATE, DEFAULT_REFRESH_RATE);
+  int storedRefreshRate = static_cast<int>(
+      prefs.getInt(KEY_REFRESH_RATE, DEFAULT_REFRESH_RATE));
+  refreshRate = std::clamp(storedRefreshRate,
+                           MIN_REFRESH_RATE,
+                           MAX_REFRESH_RATE);
   otaEnabled = prefs.getBool(KEY_OTA_ENABLED, true);
   otaBetaMode = prefs.getBool(KEY_OTA_BETA_MODE, false);
   specialFunction = prefs.getString(KEY_SPECIAL_FUNCTION, "none");
@@ -82,6 +89,7 @@ void saveOtaBetaMode(bool enabled) {
 }
 
 void saveRefreshRate(int rate) {
+  rate = std::clamp(rate, MIN_REFRESH_RATE, MAX_REFRESH_RATE);
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putInt(KEY_REFRESH_RATE, rate);
   prefs.end();
