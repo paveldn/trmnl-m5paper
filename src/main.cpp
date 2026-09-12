@@ -28,6 +28,7 @@
 #include <esp_wifi.h>
 #include <esp_sleep.h>
 #include <driver/gpio.h>
+#include <esp_task_wdt.h>
 #include <M5Unified.h>
 #include <Preferences.h>
 
@@ -59,6 +60,7 @@
 
 // Display refresh
 #define LOW_BATTERY_VOLTAGE    3.4   // Below this voltage, show warning and shut down
+static constexpr uint32_t WAKE_CYCLE_WATCHDOG_MS = 10 * 60 * 1000;
 // ─────────────────────────── RTC Memory ───────────────────────────
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR int partialRefreshCount = 0;
@@ -124,6 +126,20 @@ void invalidateImageCache(const char* reason = nullptr);
 //  SETUP — Main algorithm (runs on every wake from deep sleep)
 // ═══════════════════════════════════════════════════════════════════════════════
 void setup() {
+  // If a driver or network operation stalls, reset instead of remaining awake
+  // forever without a deep-sleep timer armed.
+  esp_task_wdt_config_t watchdogConfig = {};
+  watchdogConfig.timeout_ms = WAKE_CYCLE_WATCHDOG_MS;
+  watchdogConfig.idle_core_mask = 0;
+  watchdogConfig.trigger_panic = true;
+  esp_err_t watchdogResult = esp_task_wdt_reconfigure(&watchdogConfig);
+  if (watchdogResult == ESP_ERR_INVALID_STATE) {
+    watchdogResult = esp_task_wdt_init(&watchdogConfig);
+  }
+  if (watchdogResult == ESP_OK) {
+    esp_task_wdt_add(nullptr);
+  }
+
 #if defined(DEBUG_LOGS) || defined(ENABLE_SERVER_LOGS)
 #ifdef DEBUG_LOGS
   Serial.begin(115200);
@@ -160,11 +176,13 @@ void setup() {
   cfg.clear_display = false; // We clear right before drawing new image (minimizes white flash)
   M5.begin(cfg);
 
-  // CRITICAL: Release GPIO hold from deep sleep, then ensure GPIO2 HIGH
-  gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  // Preload GPIO2 HIGH before releasing its deep-sleep hold. Releasing first
+  // can briefly restore the reset state and glitch M5Paper's main power rail.
+  gpio_set_direction((gpio_num_t)M5EPD_MAIN_PWR_PIN, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)M5EPD_MAIN_PWR_PIN, 1);
   gpio_deep_sleep_hold_dis();
-  pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
-  digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
+  gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  gpio_set_level((gpio_num_t)M5EPD_MAIN_PWR_PIN, 1);
   deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
   startupMillis = millis();
 

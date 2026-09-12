@@ -13,6 +13,7 @@ static const int M5EPD_MAIN_PWR_PIN = 2;
 static const int DISPLAY_WIDTH = 960;
 static const int DISPLAY_HEIGHT = 540;
 static const float LOW_BATTERY_VOLTAGE = 3.4f;
+static const int LOW_BATTERY_USB_RECHECK_SECONDS = 3600;
 
 extern M5Canvas canvas;
 extern unsigned long startupMillis;
@@ -27,7 +28,6 @@ static bool detectExternalPower(int16_t* vbusAvgOut = nullptr, int16_t* vbusMaxO
   constexpr int SAMPLE_COUNT = 5;
   constexpr int VBUS_PRESENT_MV = 4000;
   constexpr int BAT_CURRENT_CHARGING_MA = 10;
-  constexpr float BAT_FULL_HINT_V = 4.18f;
 
   int32_t sum = 0;
   int16_t maxV = 0;
@@ -51,16 +51,16 @@ static bool detectExternalPower(int16_t* vbusAvgOut = nullptr, int16_t* vbusMaxO
 
   // Fallback for boards where VBUS telemetry is unavailable (often returns -1).
   if (!present && invalidCount == SAMPLE_COUNT) {
-    bool charging = M5.Power.isCharging();
+    auto chargingState = M5.Power.isCharging();
+    bool charging = chargingState == m5::Power_Class::is_charging_t::is_charging;
     int32_t batCurrent = M5.Power.getBatteryCurrent();
-    float batV = readBatteryAvg(4, 5);
 
-    // Infer external power from any strong signal when VBUS data is unavailable.
-    present = charging || (batCurrent > BAT_CURRENT_CHARGING_MA) || (batV >= BAT_FULL_HINT_V);
-    deviceLog("Power(fallback): charging=%d batCurrent=%ldmA batV=%.2fV\n",
-              charging ? 1 : 0,
-              (long)batCurrent,
-              batV);
+    // A high battery voltage is not proof of USB power. Only use signals that
+    // positively identify charging/current flow. Classic M5Paper reports
+    // charge_unknown here, which must not be converted directly to bool.
+    present = charging || (batCurrent > BAT_CURRENT_CHARGING_MA);
+    deviceLog("Power(fallback): chargingState=%d batCurrent=%ldmA\n",
+              (int)chargingState, (long)batCurrent);
   }
 
   if (vbusAvgOut) *vbusAvgOut = avgV;
@@ -118,8 +118,7 @@ bool isExternalPowerPresent() {
 }
 
 bool isBatteryCharging() {
-  // Treat stable USB/VBUS presence as charging for upstream telemetry compatibility.
-  return detectExternalPower();
+  return M5.Power.isCharging() == m5::Power_Class::is_charging_t::is_charging;
 }
 
 void showLowBatteryAndShutdown() {
@@ -187,8 +186,31 @@ void showLowBatteryAndShutdown() {
   digitalWrite(M5EPD_MAIN_PWR_PIN, LOW);
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
+  delay(250);
 
-  // Deep sleep with no wake sources — effectively off
+  // Reaching here proves that USB is already powering the ESP32. Restore the
+  // main rail and schedule a low-frequency battery recheck; otherwise a
+  // wake-less deep sleep would require unplugging USB to recover.
+  deviceLog("Main power remained on; USB power is present\n");
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
+  digitalWrite(M5EPD_MAIN_PWR_PIN, HIGH);
+
+  esp_err_t timerResult = esp_sleep_enable_timer_wakeup(
+      (uint64_t)LOW_BATTERY_USB_RECHECK_SECONDS * 1000000ULL);
+  esp_err_t buttonResult = esp_sleep_enable_ext1_wakeup(
+      (1ULL << M5PAPER_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
+  if (timerResult != ESP_OK) {
+    deviceLog("Low battery timer wake setup failed: %d\n", (int)timerResult);
+    ESP.restart();
+  }
+  if (buttonResult != ESP_OK) {
+    deviceLog("Low battery button wake setup failed: %d\n", (int)buttonResult);
+  }
+
+  gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
+  gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();
 }
 
@@ -221,12 +243,24 @@ void goToDeepSleep(int seconds) {
   // Configure wake sources
   // Button press (GPIO39, active LOW) or timer.
   // Use EXT1 here because GPIO39 has no internal pull-up.
-  esp_sleep_enable_ext1_wakeup((1ULL << M5PAPER_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
+  esp_err_t buttonResult = esp_sleep_enable_ext1_wakeup(
+      (1ULL << M5PAPER_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
+  if (buttonResult != ESP_OK) {
+    deviceLog("Button wake setup failed: %d\n", (int)buttonResult);
+  }
+
+  esp_err_t timerResult = esp_sleep_enable_timer_wakeup(
+      (uint64_t)seconds * 1000000ULL);
+  if (timerResult != ESP_OK) {
+    deviceLog("Timer wake setup failed: %d; restarting instead of sleeping\n",
+              (int)timerResult);
+    ESP.restart();
+  }
 
   // Hold ALL GPIO states through deep sleep (critical for M5Paper on battery)
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
   delay(2100);  // Allow hardware time to settle before deep sleep
 
-  esp_deep_sleep((uint64_t)seconds * 1000000ULL);
+  esp_deep_sleep_start();
 }

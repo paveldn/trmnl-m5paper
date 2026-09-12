@@ -24,6 +24,8 @@ static const uint32_t OTA_SAFETY_INTERVAL_SEC = 86400UL;
 static const char* DEVICE_MODEL = "m5paper";
 static const int DISPLAY_WIDTH = 960;
 static const int DISPLAY_HEIGHT = 540;
+static const int MIN_REFRESH_RATE = 15;
+static const int MAX_REFRESH_RATE = 86400;
 
 extern Preferences prefs;
 extern String apiKey;
@@ -364,7 +366,14 @@ void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
   const char* filename = doc["filename"];
   bool updateFirmware = doc["update_firmware"] | false;
   const char* firmwareUrl = doc["firmware_url"];
-  int newRefreshRate = doc["refresh_rate"] | refreshRate;
+  int requestedRefreshRate = doc["refresh_rate"] | refreshRate;
+  int newRefreshRate = std::clamp(requestedRefreshRate,
+                                  MIN_REFRESH_RATE,
+                                  MAX_REFRESH_RATE);
+  if (newRefreshRate != requestedRefreshRate) {
+    deviceLog("Invalid refresh rate %d; clamped to %d\n",
+              requestedRefreshRate, newRefreshRate);
+  }
 
   // ── Persist special function config sent by server ──
   {
