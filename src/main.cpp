@@ -154,7 +154,7 @@ void setup() {
   cfg.output_power = false;  // No external 5V needed (saves ~5mA via GPIO5)
 #ifdef TRMNL_PAPERDIY
   cfg.internal_rtc = false;
-#else
+#elif defined(TRMNL_M5PAPER)
   cfg.internal_rtc = true;
 #endif
   cfg.internal_imu = false;  // M5Paper has no IMU
@@ -182,7 +182,7 @@ void setup() {
   }
 #endif
 
-#ifndef TRMNL_PAPERDIY
+#ifdef TRMNL_M5PAPER
   // Preload GPIO2 HIGH before releasing its deep-sleep hold. Releasing first
   // can briefly restore the reset state and glitch M5Paper's main power rail.
   gpio_set_direction((gpio_num_t)M5EPD_MAIN_PWR_PIN, GPIO_MODE_OUTPUT);

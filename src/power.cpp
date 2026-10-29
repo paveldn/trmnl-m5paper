@@ -56,7 +56,7 @@ void initializeHardwarePower() {
 bool wasHardwareTimerWake() {
 #ifdef TRMNL_PAPERDIY
   return paperTimerWake;
-#else
+#elif defined(TRMNL_M5PAPER)
   return false;
 #endif
 }
@@ -64,7 +64,7 @@ bool wasHardwareTimerWake() {
 bool wasHardwareButtonWake() {
 #ifdef TRMNL_PAPERDIY
   return paperButtonWake;
-#else
+#elif defined(TRMNL_M5PAPER)
   return false;
 #endif
 }
@@ -239,7 +239,7 @@ void showLowBatteryAndShutdown() {
   esp_sleep_enable_timer_wakeup(
       (uint64_t)LOW_BATTERY_USB_RECHECK_SECONDS * 1000000ULL);
   esp_deep_sleep_start();
-#else
+#elif defined(TRMNL_M5PAPER)
   gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
   digitalWrite(M5EPD_MAIN_PWR_PIN, LOW);
@@ -315,7 +315,7 @@ void goToDeepSleep(int seconds) {
       (1ULL << DEVICE_WAKE_BUTTON), ESP_EXT1_WAKEUP_ANY_LOW);
   esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
   esp_deep_sleep_start();
-#else
+#elif defined(TRMNL_M5PAPER)
   // Put IT8951E into STANDBY mode (0x0002) to reduce sleep current
   // STANDBY draws ~1-2mA vs ~5-10mA idle. Wakes with any host command
   // (M5.begin() sends SYS_RUN during panel init on next boot)

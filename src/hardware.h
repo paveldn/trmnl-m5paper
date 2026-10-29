@@ -1,7 +1,17 @@
 #pragma once
 
+#if defined(TRMNL_M5PAPER) && defined(TRMNL_PAPERDIY)
+#error "Select only one hardware target"
+#elif !defined(TRMNL_M5PAPER) && !defined(TRMNL_PAPERDIY)
+#error "Select a hardware target: TRMNL_M5PAPER or TRMNL_PAPERDIY"
+#endif
+
 #ifndef DEVICE_MODEL
+#ifdef TRMNL_PAPERDIY
+#define DEVICE_MODEL "paperdiy"
+#elif defined(TRMNL_M5PAPER)
 #define DEVICE_MODEL "m5paper"
+#endif
 #endif
 
 static constexpr const char* DEVICE_MODEL_STR = DEVICE_MODEL;
@@ -10,7 +20,7 @@ static constexpr const char* DEVICE_MODEL_STR = DEVICE_MODEL;
 static constexpr const char* DEVICE_DISPLAY_NAME = "PaperDIY";
 static constexpr const char* DEVICE_SETUP_SSID = "PaperDIY-TRMNL";
 static constexpr int DEVICE_WAKE_BUTTON = 4;
-#else
+#elif defined(TRMNL_M5PAPER)
 static constexpr const char* DEVICE_DISPLAY_NAME = "M5Paper";
 static constexpr const char* DEVICE_SETUP_SSID = "M5Paper-TRMNL";
 static constexpr int DEVICE_WAKE_BUTTON = 39;
