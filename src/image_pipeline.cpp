@@ -11,6 +11,7 @@
 
 static const int MAX_IMAGE_SIZE = 200000;
 static const int FULL_REFRESH_INTERVAL = 30;
+static bool imageContentChanged = false;
 
 extern Preferences prefs;
 extern M5Canvas canvas;
@@ -39,10 +40,16 @@ String getWifiBand() {
   return "";
 }
 
-void displayImage(const char* imageUrl) {
+bool displayImage(const char* imageUrl) {
   deviceLog("Downloading...\n");
+  imageContentChanged = false;
 
   if (downloadAndDisplayImage(imageUrl)) {
+    if (!imageContentChanged) {
+      deviceLog("Image unchanged\n");
+      return true;
+    }
+
     partialRefreshCount++;
 
     if (partialRefreshCount >= FULL_REFRESH_INTERVAL) {
@@ -60,8 +67,10 @@ void displayImage(const char* imageUrl) {
     canvas.pushSprite(0, 0);
     M5.Display.waitDisplay();
     deviceLog("Display done\n");
+    return true;
   } else {
     deviceLog("Image display failed!\n");
+    return false;
   }
 }
 
@@ -71,6 +80,8 @@ bool downloadAndDisplayImage(const char* url) {
   HTTPClient http;
   String sUrl = String(url);
   http.begin(sUrl);
+  static const char* responseHeaders[] = {"ETag", "Last-Modified"};
+  http.collectHeaders(responseHeaders, 2);
   if (sUrl.startsWith(apiBaseUrl)) {
     addAuthHeaders(http, WiFi.macAddress(), apiKey);
   }
@@ -104,7 +115,7 @@ bool downloadAndDisplayImage(const char* url) {
   if (code == HTTP_CODE_NOT_MODIFIED) {
     deviceLog("Img HTTP 304 Not Modified\n");
     http.end();
-    return false;
+    return true;
   }
 #endif
 
@@ -159,13 +170,6 @@ bool downloadAndDisplayImage(const char* url) {
   String respLast = http.header("Last-Modified");
   http.end();
 
-  if (respEtag.length() > 0 || respLast.length() > 0) {
-    prefs.begin(NVS_NAMESPACE, false);
-    if (respEtag.length() > 0) prefs.putString(KEY_IMAGE_ETAG, respEtag);
-    if (respLast.length() > 0) prefs.putString(KEY_IMAGE_LASTMOD, respLast);
-    prefs.end();
-  }
-
   deviceLog("Downloaded: %d bytes\n", bytesRead);
 
   // Disconnect WiFi early so decoding/drawing happens with radio off
@@ -194,6 +198,14 @@ bool downloadAndDisplayImage(const char* url) {
   } else {
     deviceLog("Unknown format: %02X %02X %02X %02X\n",
                   buffer[0], buffer[1], buffer[2], buffer[3]);
+  }
+
+  imageContentChanged = success;
+  if (success && (respEtag.length() > 0 || respLast.length() > 0)) {
+    prefs.begin(NVS_NAMESPACE, false);
+    if (respEtag.length() > 0) prefs.putString(KEY_IMAGE_ETAG, respEtag);
+    if (respLast.length() > 0) prefs.putString(KEY_IMAGE_LASTMOD, respLast);
+    prefs.end();
   }
 
   free(buffer);

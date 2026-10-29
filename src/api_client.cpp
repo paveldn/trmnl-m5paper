@@ -366,6 +366,7 @@ void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
   const char* filename = doc["filename"];
   bool updateFirmware = doc["update_firmware"] | false;
   const char* firmwareUrl = doc["firmware_url"];
+  const char* firmwareVersion = doc["firmware_version"] | "";
   int requestedRefreshRate = doc["refresh_rate"] | refreshRate;
   int newRefreshRate = std::clamp(requestedRefreshRate,
                                   MIN_REFRESH_RATE,
@@ -410,10 +411,18 @@ void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
   // ── OTA firmware update ──
   if (otaCheckAllowed) {
     if (updateFirmware && firmwareUrl && strlen(firmwareUrl) > 0) {
-      otaUrl = String(firmwareUrl);
-      otaVersion = "server";
-      if (forceOta) {
-        deviceLog("OTA: server OTA selected while force flag active\n");
+      String advertisedVersion = String(firmwareVersion);
+      advertisedVersion.trim();
+      if (!forceOta && advertisedVersion.length() > 0 &&
+          areFirmwareVersionsEquivalent(advertisedVersion, String(FW_VERSION_STR))) {
+        deviceLog("OTA: server offered already-installed version %s; skipping\n",
+                  advertisedVersion.c_str());
+      } else {
+        otaUrl = String(firmwareUrl);
+        otaVersion = advertisedVersion.length() > 0 ? advertisedVersion : "server";
+        if (forceOta) {
+          deviceLog("OTA: server OTA selected while force flag active\n");
+        }
       }
     } else {
       String githubUrl;
@@ -458,24 +467,29 @@ void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
 
   // Check if filename changed (image caching)
   bool needsUpdate = true;
+  bool shouldSaveFilename = false;
 #ifdef FORCE_IMAGE_REFRESH_ON_WAKE
   deviceLog("Image force-refresh enabled - redrawing on every wake\n");
 #else
   if (filename && strlen(filename) > 0) {
-    prefs.begin(NVS_NAMESPACE, false);
+    prefs.begin(NVS_NAMESPACE, true);
     String lastFile = prefs.getString(KEY_LAST_FILENAME, "");
     if (lastFile == String(filename)) {
       deviceLog("Image unchanged (same filename) — skipping display\n");
       needsUpdate = false;
     } else {
-      prefs.putString(KEY_LAST_FILENAME, String(filename));
+      shouldSaveFilename = true;
     }
     prefs.end();
   }
 #endif
 
   if (needsUpdate) {
-    displayImage(imageUrl);
+    if (displayImage(imageUrl) && shouldSaveFilename) {
+      prefs.begin(NVS_NAMESPACE, false);
+      prefs.putString(KEY_LAST_FILENAME, String(filename));
+      prefs.end();
+    }
   }
 
   // Allow user to perform runtime resets by holding the wake button now.

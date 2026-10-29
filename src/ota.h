@@ -3,6 +3,8 @@
 #include <Arduino.h>
 
 bool tryInitRtcFromHttpDate(const String& dateHeader, bool force = false);
+int compareFirmwareVersions(const String& a, const String& b);
+bool areFirmwareVersionsEquivalent(const String& a, const String& b);
 bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, bool force = false, bool includePrereleases = false);
 bool isIntervalElapsed(const char* key, uint32_t intervalSec);
 void markIntervalNow(const char* key);

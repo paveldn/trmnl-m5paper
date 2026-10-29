@@ -37,7 +37,14 @@ extern void disableWiFiPS();
 extern void enableWiFiPS();
 extern void invalidateImageCache(const char* reason);
 
-static bool parseVersionParts(const String& version, int& major, int& minor, int& patch) {
+struct FirmwareVersion {
+  int major = 0;
+  int minor = 0;
+  int patch = 0;
+  String prerelease;
+};
+
+static bool parseFirmwareVersion(const String& version, FirmwareVersion& parsed) {
   String v = version;
   v.trim();
 
@@ -45,29 +52,93 @@ static bool parseVersionParts(const String& version, int& major, int& minor, int
     v.remove(0, 1);
   }
 
-  int dash = v.indexOf('-');
-  if (dash >= 0) v = v.substring(0, dash);
   int plus = v.indexOf('+');
   if (plus >= 0) v = v.substring(0, plus);
 
-  major = 0;
-  minor = 0;
-  patch = 0;
-  int matched = sscanf(v.c_str(), "%d.%d.%d", &major, &minor, &patch);
-  return matched >= 2;
+  int dash = v.indexOf('-');
+  if (dash >= 0) {
+    parsed.prerelease = v.substring(dash + 1);
+    v = v.substring(0, dash);
+  } else {
+    parsed.prerelease = "";
+  }
+
+  int consumed = 0;
+  int matched = sscanf(v.c_str(), "%d.%d.%d%n",
+                       &parsed.major, &parsed.minor, &parsed.patch, &consumed);
+  return matched == 3 && consumed == static_cast<int>(v.length());
 }
 
-static int compareVersions(const String& a, const String& b) {
-  int aMaj, aMin, aPat;
-  int bMaj, bMin, bPat;
+static bool isNumericIdentifier(const String& identifier) {
+  if (identifier.length() == 0) return false;
+  for (size_t i = 0; i < identifier.length(); ++i) {
+    if (!isDigit(identifier[i])) return false;
+  }
+  return true;
+}
 
-  if (!parseVersionParts(a, aMaj, aMin, aPat)) return 0;
-  if (!parseVersionParts(b, bMaj, bMin, bPat)) return 0;
+static int comparePrerelease(const String& a, const String& b) {
+  // A release without a prerelease suffix has higher precedence.
+  if (a.length() == 0 || b.length() == 0) {
+    if (a.length() == b.length()) return 0;
+    return a.length() == 0 ? 1 : -1;
+  }
 
-  if (aMaj != bMaj) return (aMaj > bMaj) ? 1 : -1;
-  if (aMin != bMin) return (aMin > bMin) ? 1 : -1;
-  if (aPat != bPat) return (aPat > bPat) ? 1 : -1;
-  return 0;
+  int aStart = 0;
+  int bStart = 0;
+  while (true) {
+    int aDot = a.indexOf('.', aStart);
+    int bDot = b.indexOf('.', bStart);
+    String aPart = a.substring(aStart, aDot < 0 ? a.length() : aDot);
+    String bPart = b.substring(bStart, bDot < 0 ? b.length() : bDot);
+
+    bool aNumeric = isNumericIdentifier(aPart);
+    bool bNumeric = isNumericIdentifier(bPart);
+    int partComparison = 0;
+    if (aNumeric && bNumeric) {
+      unsigned long aValue = strtoul(aPart.c_str(), nullptr, 10);
+      unsigned long bValue = strtoul(bPart.c_str(), nullptr, 10);
+      if (aValue != bValue) partComparison = aValue > bValue ? 1 : -1;
+    } else if (aNumeric != bNumeric) {
+      partComparison = aNumeric ? -1 : 1;
+    } else {
+      int lexical = aPart.compareTo(bPart);
+      if (lexical != 0) partComparison = lexical > 0 ? 1 : -1;
+    }
+    if (partComparison != 0) return partComparison;
+
+    bool aDone = aDot < 0;
+    bool bDone = bDot < 0;
+    if (aDone || bDone) {
+      if (aDone == bDone) return 0;
+      return aDone ? -1 : 1;
+    }
+    aStart = aDot + 1;
+    bStart = bDot + 1;
+  }
+}
+
+int compareFirmwareVersions(const String& a, const String& b) {
+  FirmwareVersion aVersion;
+  FirmwareVersion bVersion;
+
+  if (!parseFirmwareVersion(a, aVersion) || !parseFirmwareVersion(b, bVersion)) {
+    return 0;
+  }
+
+  if (aVersion.major != bVersion.major) return aVersion.major > bVersion.major ? 1 : -1;
+  if (aVersion.minor != bVersion.minor) return aVersion.minor > bVersion.minor ? 1 : -1;
+  if (aVersion.patch != bVersion.patch) return aVersion.patch > bVersion.patch ? 1 : -1;
+  return comparePrerelease(aVersion.prerelease, bVersion.prerelease);
+}
+
+bool areFirmwareVersionsEquivalent(const String& a, const String& b) {
+  FirmwareVersion aVersion;
+  FirmwareVersion bVersion;
+  if (!parseFirmwareVersion(a, aVersion) || !parseFirmwareVersion(b, bVersion)) {
+    return false;
+  }
+  return compareFirmwareVersions(a, b) == 0;
 }
 
 static bool getCurrentEpoch(time_t& epochOut) {
@@ -232,7 +303,7 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
       return false;
     }
 
-    int versionCmp = compareVersions(tag, String(FW_VERSION));
+    int versionCmp = compareFirmwareVersions(tag, String(FW_VERSION));
     if (!force && versionCmp <= 0) {
       deviceLog("OTA: no newer release (current %s, latest %s)\n", FW_VERSION, tag.c_str());
       return false;
@@ -301,7 +372,7 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
         normalizedTag.remove(0, 1);
       }
 
-      int versionCmp = compareVersions(tag, String(FW_VERSION));
+      int versionCmp = compareFirmwareVersions(tag, String(FW_VERSION));
       if (!force) {
         if (normalizedTag.equalsIgnoreCase(currentTag)) {
           continue;
@@ -355,7 +426,7 @@ bool checkGitHubReleaseForUpdate(String& firmwareUrlOut, String& versionOut, boo
       selectedIsPrerelease = true;
     }
 
-    if (selectedTag.length() > 0 && force && compareVersions(selectedTag, String(FW_VERSION)) <= 0) {
+    if (selectedTag.length() > 0 && force && compareFirmwareVersions(selectedTag, String(FW_VERSION)) <= 0) {
       deviceLog("OTA: force mode active, using latest %s %s even though current is %s\n",
                 selectedIsPrerelease ? "prerelease" : "release",
                 selectedTag.c_str(),
