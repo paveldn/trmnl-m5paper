@@ -8,15 +8,18 @@ const installButton = document.querySelector(".install-button");
 
 let releases = [];
 
+function manifestFor(release, device = deviceSelect.value) {
+  return release.manifests?.[device] ||
+    (device === "m5paper" ? release.manifest : null);
+}
+
 function selectRelease(tag) {
   const release = releases.find((candidate) => candidate.tag === tag);
   if (!release) {
     return;
   }
 
-  const device = deviceSelect.value;
-  const manifest = release.manifests?.[device] ||
-    (device === "m5paper" ? release.manifest : null);
+  const manifest = manifestFor(release);
   if (!manifest) {
     webInstaller.removeAttribute("manifest");
     installButton.disabled = true;
@@ -32,8 +35,23 @@ function selectRelease(tag) {
 
 function renderReleaseOptions(preferredTag) {
   const visibleReleases = releases.filter(
-    (release) => includeBeta.checked || !release.prerelease,
+    (release) =>
+      manifestFor(release) &&
+      (includeBeta.checked || !release.prerelease),
   );
+
+  if (visibleReleases.length === 0) {
+    releaseSelect.replaceChildren();
+    releaseSelect.disabled = true;
+    installButton.disabled = true;
+    firmwareVersion.textContent = includeBeta.checked
+      ? "No releases for this hardware"
+      : "No stable release for this hardware";
+    firmwareVersion.dataset.state = "error";
+    return;
+  }
+
+  releaseSelect.disabled = false;
   const selectedTag = visibleReleases.some(
     (release) => release.tag === preferredTag,
   )
@@ -66,7 +84,6 @@ async function loadFirmwareVersion() {
 
       releases = catalog.releases;
       renderReleaseOptions(catalog.default);
-      releaseSelect.disabled = false;
       includeBeta.disabled = false;
       return;
     }
@@ -94,10 +111,10 @@ async function loadFirmwareVersion() {
 releaseSelect.addEventListener("change", () => selectRelease(releaseSelect.value));
 deviceSelect.addEventListener("change", () => {
   deviceModel.textContent = deviceSelect.value === "paperdiy"
-    ? "PaperDIY Complete Kit K159-B · ESP32-S3"
+    ? "PaperDIY K159 / K159-B · ESP32-S3"
     : "M5Paper K049 / K049-B · ESP32";
   if (releases.length) {
-    selectRelease(releaseSelect.value);
+    renderReleaseOptions(releaseSelect.value);
   } else {
     webInstaller.setAttribute(
       "manifest",
