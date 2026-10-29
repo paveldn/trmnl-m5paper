@@ -1,6 +1,10 @@
 # M5Paper / PaperDIY TRMNL Firmware
 
-Custom firmware for M5Stack M5Paper and PaperDIY that turns either device into a [TRMNL](https://usetrmnl.com/) BYOD display.
+[![CI](https://github.com/paveldn/trmnl-m5paper/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/paveldn/trmnl-m5paper/actions/workflows/build.yml)
+[![Latest Release](https://img.shields.io/github/v/release/paveldn/trmnl-m5paper?label=release)](https://github.com/paveldn/trmnl-m5paper/releases/latest)
+[![Web Installer](https://img.shields.io/badge/Web_Installer-open-blue?logo=googlechrome&logoColor=white)](https://paveldn.github.io/trmnl-m5paper/)
+
+Custom firmware for supported M5Stack M5Paper and PaperDIY models that turns them into [TRMNL](https://usetrmnl.com/) BYOD displays.
 
 ## Features
 
@@ -17,12 +21,27 @@ Custom firmware for M5Stack M5Paper and PaperDIY that turns either device into a
 - OTA safety cooldown (max one OTA attempt per 24h)
 - Clone-aware OTA source (uses GitHub origin repo at build time)
 
-## Hardware
+## Supported Hardware
 
-- [M5Paper](https://docs.m5stack.com/en/core/m5paper) — ESP32-D0WDQ5, 4.7" e-paper 960×540
-- [PaperDIY Complete Kit](https://docs.m5stack.com/en/core/PaperDIY_Complete_Kit) — ESP32-S3R8, 4.7" e-paper 960×540
-- M5Paper sleep: ESP32 timer/button wake with the GPIO2 power rail held
-- PaperDIY sleep: M5PM1 timed power-off; the power button wakes it manually
+Only the following M5Stack devices are supported:
+
+| Device | SKU | Processor | PlatformIO environment | Official product pages |
+| --- | --- | --- | --- | --- |
+| M5Paper | K049 | ESP32 | `m5stack_paper` | [M5Stack Store](https://shop.m5stack.com/products/m5paper-esp32-development-kit-960x540-4-7-eink-display-235-ppi) · [Documentation](https://docs.m5stack.com/en/core/m5paper) |
+| M5Paper v1.1 | K049-B | ESP32 | `m5stack_paper` | [M5Stack Store](https://shop.m5stack.com/products/m5paper-esp32-development-kit-v1-1-960x540-4-7-eink-display-235-ppi) · [Documentation](https://docs.m5stack.com/en/core/m5paper_v1.1) |
+| PaperDIY Complete Kit | K159-B | ESP32-S3R8 | `paperdiy` | [M5Stack Store](https://shop.m5stack.com/products/paperdiy-complete-kit-esp32-s3) · [Documentation](https://docs.m5stack.com/en/core/PaperDIY_Complete_Kit) |
+| PaperDIY Assembly Kit | K159 | ESP32-S3R8 | `paperdiy` | [M5Stack Store](https://shop.m5stack.com/products/paperdiy-assembly-kit-esp32-s3) · [Documentation](https://docs.m5stack.com/en/core/PaperDIY_Assembly_Kit) |
+
+M5Paper uses ESP32 timer/button wake while holding its GPIO2 power rail.
+PaperDIY uses its M5PM1 controller for timed power-off; its power button provides
+manual wake.
+
+### Not Supported
+
+PaperS3, M5Paper Color, CoreInk, PaperMono, PaperMono Lite, and other M5Stack
+e-paper products are not supported. Similar display size or resolution does not
+make their firmware compatible. Flash only the build matching a device listed
+in the table above.
 
 ## Building
 
@@ -40,13 +59,13 @@ Use the [web installer](https://paveldn.github.io/trmnl-m5paper/) to
 flash the complete firmware from desktop Chrome or Edge:
 
 1. Connect the device with a data-capable USB-C cable and power it on.
-2. Select M5Paper K049/K049-B or PaperDIY Complete Kit K159-B.
+2. Select M5Paper K049/K049-B or PaperDIY K159/K159-B.
 3. Click **Connect & install**, then select its serial port.
 4. Keep the cable connected until flashing completes.
 5. Join the `TRMNL-XXXX` WiFi network and complete the setup page.
 
-PaperS3, M5Paper Color, and CoreInk are not supported. The two supported devices
-use different chip families, so select the exact model before flashing.
+PaperS3, M5Paper Color, and CoreInk are not supported. The two supported device
+families use different chip families, so select the exact model before flashing.
 
 The version shown on the installer page is loaded at runtime from the same
 generated manifest used for flashing. The manifest version is derived from
@@ -188,11 +207,20 @@ Compatibility / Notes
 - [TRMNL API](https://docs.usetrmnl.com/)
 
 ### M5Paper
-- [M5Paper product page](https://docs.m5stack.com/en/core/m5paper)
+- [M5Paper K049 product page](https://shop.m5stack.com/products/m5paper-esp32-development-kit-960x540-4-7-eink-display-235-ppi)
+- [M5Paper v1.1 K049-B product page](https://shop.m5stack.com/products/m5paper-esp32-development-kit-v1-1-960x540-4-7-eink-display-235-ppi)
+- [M5Paper documentation](https://docs.m5stack.com/en/core/m5paper)
 - [M5Paper Arduino API](https://docs.m5stack.com/en/arduino/m5paper/system_api)
 - [M5Paper deep sleep / wakeup](https://docs.m5stack.com/en/arduino/m5paper/wakeup)
 - [M5Unified library](https://github.com/m5stack/M5Unified)
 - [Community: M5Paper shutdown & deep sleep](https://community.m5stack.com/topic/2892/m5paper-shutdown-deep-sleep-wakeup)
+
+### PaperDIY
+- [PaperDIY Complete Kit K159-B product page](https://shop.m5stack.com/products/paperdiy-complete-kit-esp32-s3)
+- [PaperDIY Assembly Kit K159 product page](https://shop.m5stack.com/products/paperdiy-assembly-kit-esp32-s3)
+- [PaperDIY Complete Kit documentation](https://docs.m5stack.com/en/core/PaperDIY_Complete_Kit)
+- [PaperDIY Assembly Kit documentation](https://docs.m5stack.com/en/core/PaperDIY_Assembly_Kit)
+- [M5PM1 library](https://github.com/m5stack/M5PM1)
 
 ## License
 
