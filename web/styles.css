@@ -237,7 +237,7 @@ h1 {
   border: 0;
 }
 
-.release-picker > label:first-child {
+.release-picker > label:not(.beta-toggle) {
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0.08em;

@@ -44,9 +44,9 @@ jobs:
           jq -r '.[][] | select(.draft == false) |
             .tag_name as $tag |
             .assets[]? |
-            select(.name == "m5paper.factory.bin") |
-            [$tag, (.id | tostring)] | @tsv' dist/releases-api.json |
-          while IFS=$'\t' read -r tag asset_id; do
+            select(.name == "m5paper.factory.bin" or .name == "paperdiy.factory.bin") |
+            [$tag, .name, (.id | tostring)] | @tsv' dist/releases-api.json |
+          while IFS=$'\t' read -r tag asset_name asset_id; do
             if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "Skipping unsupported release tag: $tag"
               continue
@@ -54,7 +54,7 @@ jobs:
             mkdir -p "dist/releases/$tag"
             gh api -H "Accept: application/octet-stream" \
               "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
-              > "dist/releases/$tag/m5paper.factory.bin"
+              > "dist/releases/$tag/$asset_name"
           done
           requested_tag="${INPUT_TAG:-${EVENT_TAG:-}}"
           if [[ -n "$requested_tag" ]]; then

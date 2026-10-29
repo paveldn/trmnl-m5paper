@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#f2efe6" />
     <meta
       name="description"
-      content="Install TRMNL firmware on an M5Paper directly from a supported browser."
+      content="Install TRMNL firmware on an M5Paper or PaperDIY directly from a supported browser."
     />
-    <title>TRMNL for M5Paper — Web Installer</title>
+    <title>TRMNL for M5Stack e-paper — Web Installer</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="stylesheet" href="styles.css" />
     <script type="module" src="installer.js"></script>
@@ -25,15 +25,15 @@
           href="https://github.com/paveldn/trmnl-m5paper"
           aria-label="TRMNL M5Paper repository"
         >
-          TRMNL <span>/</span> M5PAPER
+          TRMNL <span>/</span> M5STACK E-PAPER
         </a>
         <span class="status"><i aria-hidden="true"></i> WEB FLASHER</span>
       </header>
 
       <section class="hero" aria-labelledby="page-title">
         <div class="hero-copy">
-          <div class="eyebrow">M5PAPER FIRMWARE INSTALLER</div>
-          <h1 id="page-title">Turn your M5Paper into a TRMNL display.</h1>
+          <div class="eyebrow">M5STACK E-PAPER FIRMWARE INSTALLER</div>
+          <h1 id="page-title">Turn your M5Paper or PaperDIY into a TRMNL display.</h1>
           <p class="lede">
             Connect with USB, flash from this page, then finish setup over the
             device’s temporary Wi-Fi network. No desktop flashing tools
@@ -68,7 +68,7 @@
             <span class="device-icon" aria-hidden="true"></span>
             <div class="device-details">
               <strong>Target device</strong>
-              <span class="device-model">M5Paper K049 / K049-B · ESP32</span>
+              <span class="device-model" id="device-model">M5Paper K049 / K049-B · ESP32</span>
               <div class="firmware-version">
                 <span>Version to install</span>
                 <output id="firmware-version" aria-live="polite">
@@ -78,11 +78,16 @@
             </div>
           </div>
 
-          <fieldset class="release-picker" disabled>
+          <fieldset class="release-picker">
+            <label for="target-device">Device</label>
+            <select id="target-device">
+              <option value="m5paper">M5Paper K049 / K049-B</option>
+              <option value="paperdiy">PaperDIY Complete Kit K159-B</option>
+            </select>
             <label for="firmware-release">Firmware version</label>
-            <select id="firmware-release" aria-describedby="release-help"></select>
+            <select id="firmware-release" aria-describedby="release-help" disabled></select>
             <label class="beta-toggle" for="include-beta">
-              <input id="include-beta" type="checkbox" />
+              <input id="include-beta" type="checkbox" disabled />
               Include beta releases
             </label>
             <p id="release-help">Stable releases are shown by default.</p>
@@ -91,10 +96,8 @@
           <div id="model-compatibility" class="model-warning" role="note">
             <strong>Check your model before installing</strong>
             <p>
-              This firmware is only for M5Paper K049 and K049-B. PaperS3 and
-              M5Paper Color are rejected automatically because they use an
-              ESP32-S3 chip. CoreInk and other original-ESP32 boards cannot be
-              identified automatically, so verify the model label first.
+              Select the exact device above. M5Paper and PaperDIY use different
+              processors and their firmware images are not interchangeable.
             </p>
           </div>
 
@@ -134,7 +137,7 @@
             <div>
               <h3>Connect</h3>
               <p>
-                Use a data-capable USB-C cable, power on the M5Paper, and close
+                Use a data-capable USB-C cable, power on the device, and close
                 any serial monitor that is using it.
               </p>
             </div>
@@ -144,7 +147,7 @@
             <div>
               <h3>Install</h3>
               <p>
-                Select <em>Connect &amp; install</em>, choose the M5Paper serial
+                Select <em>Connect &amp; install</em>, choose the device serial
                 port, and follow the prompts. Installing erases old device
                 settings so the new firmware starts cleanly.
               </p>
@@ -165,7 +168,7 @@
 
       <footer>
         <div class="project-credit">
-          <p>Open-source firmware for the M5Stack M5Paper.</p>
+          <p>Open-source firmware for M5Stack M5Paper and PaperDIY.</p>
           <p>
             M5Paper adaptation by
             <a href="https://github.com/paveldn" rel="author">Pavlo Dudnytskyi</a>

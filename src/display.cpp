@@ -31,7 +31,7 @@ void showSetupScreen(const String& message) {
   canvas.setTextDatum(MC_DATUM);
   canvas.setFont(&fonts::FreeSansBold12pt7b);
 
-  canvas.drawString("M5Paper TRMNL", DISPLAY_WIDTH / 2, 60);
+  canvas.drawString(String(DEVICE_DISPLAY_NAME) + " TRMNL", DISPLAY_WIDTH / 2, 60);
 
   canvas.setFont(&fonts::FreeSans12pt7b);
   int y = 180;

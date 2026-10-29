@@ -16,7 +16,7 @@ from prepare_web_installer import TAG_PATTERN, prepare_release_catalog
 
 
 DEFAULT_REPOSITORY = "paveldn/trmnl-m5paper"
-ASSET_NAME = "m5paper.factory.bin"
+ASSET_NAMES = ("m5paper.factory.bin", "paperdiy.factory.bin")
 
 
 def request(url: str) -> urllib.request.Request:
@@ -54,28 +54,30 @@ def download_release_assets(
         assets = release.get("assets", [])
         if not isinstance(assets, list):
             continue
-        asset = next(
-            (
-                candidate
-                for candidate in assets
-                if isinstance(candidate, dict) and candidate.get("name") == ASSET_NAME
-            ),
-            None,
-        )
-        if asset is None:
-            continue
-
-        download_url = asset.get("browser_download_url")
-        if not isinstance(download_url, str):
-            continue
-
         target_dir = destination / tag
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / ASSET_NAME
-        print(f"Downloading {tag}...")
-        with urllib.request.urlopen(request(download_url)) as response, target.open("wb") as output:
-            shutil.copyfileobj(response, output)
-        downloaded += 1
+        for asset_name in ASSET_NAMES:
+            asset = next(
+                (
+                    candidate
+                    for candidate in assets
+                    if isinstance(candidate, dict)
+                    and candidate.get("name") == asset_name
+                ),
+                None,
+            )
+            if asset is None:
+                continue
+
+            download_url = asset.get("browser_download_url")
+            if not isinstance(download_url, str):
+                continue
+
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / asset_name
+            print(f"Downloading {tag}/{asset_name}...")
+            with urllib.request.urlopen(request(download_url)) as response, target.open("wb") as output:
+                shutil.copyfileobj(response, output)
+            downloaded += 1
     return downloaded
 
 
@@ -102,14 +104,14 @@ def main() -> None:
         firmware_dir = temp_dir / "firmware"
         count = download_release_assets(releases, firmware_dir)
         if count == 0:
-            raise RuntimeError(f"No releases contain {ASSET_NAME}")
+            raise RuntimeError(f"No releases contain {ASSET_NAMES[0]}")
 
         releases_json = temp_dir / "releases.json"
         releases_json.write_text(json.dumps(releases), encoding="utf-8")
         output = args.output.resolve()
         prepare_release_catalog(output, releases_json, firmware_dir)
 
-    print(f"Prepared {count} firmware versions in {output}")
+    print(f"Prepared {count} firmware assets in {output}")
     if args.build_only:
         return
 

@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <vector>
 
+#include "hardware.h"
+
 // ─────────────────────────── External references ───────────────────────────
 extern String configuredSSID;
 extern String configuredPass;
@@ -148,7 +150,7 @@ static const char PORTAL_HTML[] PROGMEM = R"rawliteral(
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>M5Paper TRMNL Setup</title>
+<title>TRMNL Display Setup</title>
 <style>
 body{font-family:-apple-system,sans-serif;margin:0;padding:20px;background:#f5f5f5}
 .container{max-width:400px;margin:0 auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,0.1)}
@@ -171,7 +173,7 @@ select{appearance:auto}
 </head>
 <body>
 <div class="container">
-<h1>M5Paper TRMNL</h1>
+<h1>TRMNL Display</h1>
 <h2>Device Configuration</h2>
 <form id="configForm">
 <label for="ssid">WiFi Network</label>
@@ -376,11 +378,11 @@ void startCaptivePortal() {
   Serial.println("Starting captive portal...");
 #endif
 
-  showSetupScreen("Connect to WiFi:\nM5Paper-TRMNL\nThen open: 192.168.4.1");
+  showSetupScreen(String("Connect to WiFi:\n") + DEVICE_SETUP_SSID + "\nThen open: 192.168.4.1");
 
   // Start AP
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("M5Paper-TRMNL", "");  // Open network for easy setup
+  WiFi.softAP(DEVICE_SETUP_SSID, "");  // Open network for easy setup
   delay(100);
 
   refreshWifiNetworkOptions();

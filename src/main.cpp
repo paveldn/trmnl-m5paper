@@ -1,9 +1,9 @@
 /**
  * M5Paper TRMNL Firmware
- * 
+ *
  * Fetches and displays images from TRMNL API on M5Paper e-ink display.
  * Algorithm aligned with official TRMNL firmware behavior.
- * 
+ *
  * Features:
  * - WiFi captive portal for configuration (no hardcoded credentials)
  * - Support for official TRMNL server and custom/local servers
@@ -17,9 +17,9 @@
  * - OTA firmware updates
  * - Image caching (skip redraw if unchanged)
  * - WiFi/API exponential backoff retries
- * 
+ *
  * Hardware: M5Paper (ESP32-D0WDQ5, 4.7" e-paper 960x540)
- * 
+ *
  * @version defined by platformio.ini app_version
  * @see https://docs.trmnl.com/go/diy/byod
  */
@@ -144,34 +144,45 @@ void setup() {
 #endif
   bootCount++;
 
-  // ── Determine wake reason ──
-  // After deep sleep with gpio_deep_sleep_hold_en(), ESP32 wakes and
-  // esp_sleep_get_wakeup_cause() returns the actual cause directly.
+  // Read the native ESP wake reason before board initialization. PaperDIY
+  // normally wakes from a full PMIC shutdown, so its final reason is read
+  // from M5PM1 after M5.begin().
   esp_sleep_wakeup_cause_t wakeup = esp_sleep_get_wakeup_cause();
+
+  // ── Initialize display hardware ──
+  auto cfg = M5.config();
+  cfg.output_power = false;  // No external 5V needed (saves ~5mA via GPIO5)
+#ifdef TRMNL_PAPERDIY
+  cfg.internal_rtc = false;
+#else
+  cfg.internal_rtc = true;
+#endif
+  cfg.internal_imu = false;  // M5Paper has no IMU
+  cfg.internal_mic = false;  // Not used
+  cfg.internal_spk = false;  // Not used
+  cfg.clear_display = false; // We clear right before drawing new image (minimizes white flash)
+  M5.begin(cfg);
+  initializeHardwarePower();
+
+#ifdef TRMNL_PAPERDIY
+  if (wasHardwareTimerWake()) wakeup = ESP_SLEEP_WAKEUP_TIMER;
+  else if (wasHardwareButtonWake()) wakeup = ESP_SLEEP_WAKEUP_EXT1;
+#endif
+
   const char* wakeStr = "COLD";
   if (wakeup == ESP_SLEEP_WAKEUP_TIMER) wakeStr = "TIMER";
   else if (wakeup == ESP_SLEEP_WAKEUP_EXT1) wakeStr = "EXT1";
-  UPDATE_SOURCE_STR = wakeStr;  // server uses this to detect button wakes for playlist advance
+  UPDATE_SOURCE_STR = wakeStr;
   bool coldBoot = (wakeup == ESP_SLEEP_WAKEUP_UNDEFINED);
 
 #ifdef FORCE_OTA_ON_NEXT_BOOT
-  // Test helper: force OTA logic once on cold boot only.
   forceOtaOnThisBoot = coldBoot;
   if (forceOtaOnThisBoot) {
     deviceLog("OTA: FORCE_OTA_ON_NEXT_BOOT active for this boot\n");
   }
 #endif
 
-  // ── Initialize M5Paper ──
-  auto cfg = M5.config();
-  cfg.output_power = false;  // No external 5V needed (saves ~5mA via GPIO5)
-  cfg.internal_rtc = true;
-  cfg.internal_imu = false;  // M5Paper has no IMU
-  cfg.internal_mic = false;  // Not used
-  cfg.internal_spk = false;  // Not used
-  cfg.clear_display = false; // We clear right before drawing new image (minimizes white flash)
-  M5.begin(cfg);
-
+#ifndef TRMNL_PAPERDIY
   // Preload GPIO2 HIGH before releasing its deep-sleep hold. Releasing first
   // can briefly restore the reset state and glitch M5Paper's main power rail.
   gpio_set_direction((gpio_num_t)M5EPD_MAIN_PWR_PIN, GPIO_MODE_OUTPUT);
@@ -179,6 +190,7 @@ void setup() {
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_set_level((gpio_num_t)M5EPD_MAIN_PWR_PIN, 1);
+#endif
   deviceLog("[Boot #%d] Wake: %s\n", bootCount, wakeStr);
   startupMillis = millis();
 
@@ -224,7 +236,7 @@ void setup() {
       case WakePress::MEDIUM:
         deviceLog("Button: medium press → special function: %s\n", specialFunction.c_str());
         if (specialFunction == "add_wifi") {
-          showSetupScreen("Opening WiFi Setup...\nM5Paper-TRMNL\n192.168.4.1");
+          showSetupScreen(String("Opening WiFi Setup...\n") + DEVICE_SETUP_SSID + "\n192.168.4.1");
           startCaptivePortal();
           return;
         }
@@ -255,7 +267,7 @@ void setup() {
   // ── Check if WiFi is configured ──
   if (configuredSSID.length() == 0) {
     deviceLog("No WiFi configured - starting captive portal\n");
-    showSetupScreen("Connect to WiFi:\nM5Paper-TRMNL\nThen open: 192.168.4.1");
+    showSetupScreen(String("Connect to WiFi:\n") + DEVICE_SETUP_SSID + "\nThen open: 192.168.4.1");
     startCaptivePortal();
     return;
   }

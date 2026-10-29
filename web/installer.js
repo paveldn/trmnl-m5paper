@@ -1,8 +1,10 @@
 const webInstaller = document.querySelector("esp-web-install-button");
 const firmwareVersion = document.querySelector("#firmware-version");
-const releasePicker = document.querySelector(".release-picker");
 const releaseSelect = document.querySelector("#firmware-release");
 const includeBeta = document.querySelector("#include-beta");
+const deviceSelect = document.querySelector("#target-device");
+const deviceModel = document.querySelector("#device-model");
+const installButton = document.querySelector(".install-button");
 
 let releases = [];
 
@@ -12,7 +14,18 @@ function selectRelease(tag) {
     return;
   }
 
-  webInstaller.setAttribute("manifest", release.manifest);
+  const device = deviceSelect.value;
+  const manifest = release.manifests?.[device] ||
+    (device === "m5paper" ? release.manifest : null);
+  if (!manifest) {
+    webInstaller.removeAttribute("manifest");
+    installButton.disabled = true;
+    firmwareVersion.textContent = "Unavailable for this release";
+    firmwareVersion.dataset.state = "error";
+    return;
+  }
+  installButton.disabled = false;
+  webInstaller.setAttribute("manifest", manifest);
   firmwareVersion.textContent = `v${release.version.replace(/^v/, "")}`;
   firmwareVersion.dataset.state = "ready";
 }
@@ -53,7 +66,8 @@ async function loadFirmwareVersion() {
 
       releases = catalog.releases;
       renderReleaseOptions(catalog.default);
-      releasePicker.disabled = false;
+      releaseSelect.disabled = false;
+      includeBeta.disabled = false;
       return;
     }
 
@@ -78,6 +92,19 @@ async function loadFirmwareVersion() {
 }
 
 releaseSelect.addEventListener("change", () => selectRelease(releaseSelect.value));
+deviceSelect.addEventListener("change", () => {
+  deviceModel.textContent = deviceSelect.value === "paperdiy"
+    ? "PaperDIY Complete Kit K159-B · ESP32-S3"
+    : "M5Paper K049 / K049-B · ESP32";
+  if (releases.length) {
+    selectRelease(releaseSelect.value);
+  } else {
+    webInstaller.setAttribute(
+      "manifest",
+      deviceSelect.value === "paperdiy" ? "paperdiy-manifest.json" : "manifest.json",
+    );
+  }
+});
 includeBeta.addEventListener("change", () =>
   renderReleaseOptions(releaseSelect.value),
 );

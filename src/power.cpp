@@ -5,6 +5,9 @@
 #include <esp_sleep.h>
 #include <driver/gpio.h>
 #include <M5Unified.h>
+#ifdef TRMNL_PAPERDIY
+#include <M5PM1.h>
+#endif
 #include <algorithm>
 #include <cmath>
 
@@ -20,6 +23,51 @@ extern int lastWakeTime;
 extern void deviceLog(const char* fmt, ...);
 extern void sendLogs();
 extern void invalidateImageCache(const char* reason);
+
+#ifdef TRMNL_PAPERDIY
+static M5PM1 paperPm1;
+static bool paperPm1Ready = false;
+static bool paperTimerWake = false;
+static bool paperButtonWake = false;
+#endif
+
+void initializeHardwarePower() {
+#ifdef TRMNL_PAPERDIY
+  m5pm1_err_t result = paperPm1.begin(
+      &M5.In_I2C, M5PM1_DEFAULT_ADDR, M5PM1_I2C_FREQ_100K);
+  paperPm1Ready = (result == M5PM1_OK);
+  if (!paperPm1Ready) {
+    deviceLog("M5PM1 initialization failed: %d\n", (int)result);
+    return;
+  }
+
+  uint8_t wakeSource = 0;
+  result = paperPm1.getWakeSource(&wakeSource, M5PM1_CLEAN_ALL);
+  if (result == M5PM1_OK) {
+    paperTimerWake = (wakeSource & M5PM1_WAKE_SRC_TIM) != 0;
+    paperButtonWake = (wakeSource & M5PM1_WAKE_SRC_PWRBTN) != 0;
+    deviceLog("M5PM1 wake source: 0x%02x\n", wakeSource);
+  } else {
+    deviceLog("M5PM1 wake source read failed: %d\n", (int)result);
+  }
+#endif
+}
+
+bool wasHardwareTimerWake() {
+#ifdef TRMNL_PAPERDIY
+  return paperTimerWake;
+#else
+  return false;
+#endif
+}
+
+bool wasHardwareButtonWake() {
+#ifdef TRMNL_PAPERDIY
+  return paperButtonWake;
+#else
+  return false;
+#endif
+}
 
 static bool detectExternalPower(int16_t* vbusAvgOut = nullptr, int16_t* vbusMaxOut = nullptr) {
   // VBUS ADC can be noisy on wake; use multiple samples and majority logic.
@@ -179,6 +227,19 @@ void showLowBatteryAndShutdown() {
   M5.Display.waitDisplay();
 
   // Kill main power — only USB connection will restart
+#ifdef TRMNL_PAPERDIY
+  if (paperPm1Ready) {
+    paperPm1.timerClear();
+    m5pm1_err_t shutdownResult = paperPm1.shutdown();
+    deviceLog("M5PM1 low-battery shutdown result: %d\n", (int)shutdownResult);
+    delay(1000);
+  }
+
+  // Fallback if the PMIC is unavailable or refuses to shut down.
+  esp_sleep_enable_timer_wakeup(
+      (uint64_t)LOW_BATTERY_USB_RECHECK_SECONDS * 1000000ULL);
+  esp_deep_sleep_start();
+#else
   gpio_hold_dis((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   pinMode(M5EPD_MAIN_PWR_PIN, OUTPUT);
   digitalWrite(M5EPD_MAIN_PWR_PIN, LOW);
@@ -198,7 +259,7 @@ void showLowBatteryAndShutdown() {
   esp_err_t timerResult = esp_sleep_enable_timer_wakeup(
       (uint64_t)LOW_BATTERY_USB_RECHECK_SECONDS * 1000000ULL);
   esp_err_t buttonResult = esp_sleep_enable_ext1_wakeup(
-      (1ULL << M5PAPER_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
+      (1ULL << DEVICE_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
   if (timerResult != ESP_OK) {
     deviceLog("Low battery timer wake setup failed: %d\n", (int)timerResult);
     ESP.restart();
@@ -210,6 +271,7 @@ void showLowBatteryAndShutdown() {
   gpio_hold_en((gpio_num_t)M5EPD_MAIN_PWR_PIN);
   gpio_deep_sleep_hold_en();
   esp_deep_sleep_start();
+#endif
 }
 
 void goToDeepSleep(int seconds) {
@@ -231,6 +293,29 @@ void goToDeepSleep(int seconds) {
     delay(10);
   }
 
+#ifdef TRMNL_PAPERDIY
+  M5.Display.waitDisplay();
+  M5.Display.sleep();
+
+  if (paperPm1Ready) {
+    m5pm1_err_t timerResult = paperPm1.timerSet(
+        (uint32_t)seconds, M5PM1_TIM_ACTION_POWERON);
+    if (timerResult == M5PM1_OK) {
+      m5pm1_err_t shutdownResult = paperPm1.shutdown();
+      deviceLog("M5PM1 shutdown result: %d\n", (int)shutdownResult);
+      delay(1000);
+    } else {
+      deviceLog("M5PM1 timer setup failed: %d; using ESP deep sleep\n",
+                (int)timerResult);
+    }
+  }
+
+  // Fallback if the PMIC is unavailable or refuses to shut down.
+  esp_sleep_enable_ext1_wakeup(
+      (1ULL << DEVICE_WAKE_BUTTON), ESP_EXT1_WAKEUP_ANY_LOW);
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000ULL);
+  esp_deep_sleep_start();
+#else
   // Put IT8951E into STANDBY mode (0x0002) to reduce sleep current
   // STANDBY draws ~1-2mA vs ~5-10mA idle. Wakes with any host command
   // (M5.begin() sends SYS_RUN during panel init on next boot)
@@ -242,7 +327,7 @@ void goToDeepSleep(int seconds) {
   // Button press (GPIO39, active LOW) or timer.
   // Use EXT1 here because GPIO39 has no internal pull-up.
   esp_err_t buttonResult = esp_sleep_enable_ext1_wakeup(
-      (1ULL << M5PAPER_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
+      (1ULL << DEVICE_WAKE_BUTTON), ESP_EXT1_WAKEUP_ALL_LOW);
   if (buttonResult != ESP_OK) {
     deviceLog("Button wake setup failed: %d\n", (int)buttonResult);
   }
@@ -261,4 +346,5 @@ void goToDeepSleep(int seconds) {
   delay(2100);  // Allow hardware time to settle before deep sleep
 
   esp_deep_sleep_start();
+#endif
 }

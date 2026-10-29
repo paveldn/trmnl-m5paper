@@ -17,14 +17,13 @@ extern void showErrorScreen(const String& message);
 extern void showSetupScreen(const String& message);
 
 bool handleBootButtonReset() {
-  // GPIO39 is input-only and has no internal pull-up on ESP32.
-  pinMode(M5PAPER_WAKE_BUTTON, INPUT);
+  pinMode(DEVICE_WAKE_BUTTON, INPUT);
 
   // Aligned with TRMNL: 5s hold = WiFi clear, 15s = factory reset
-  if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+  if (digitalRead(DEVICE_WAKE_BUTTON) == LOW) {
     deviceLog("Button held at boot...\n");
     unsigned long pressStart = millis();
-    while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+    while (digitalRead(DEVICE_WAKE_BUTTON) == LOW) {
       unsigned long held = millis() - pressStart;
       if (held > BUTTON_FACTORY_RESET) {
         break;
@@ -60,11 +59,11 @@ bool handleBootButtonReset() {
 }
 
 void checkRuntimeReset() {
-  pinMode(M5PAPER_WAKE_BUTTON, INPUT);
-  if (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+  pinMode(DEVICE_WAKE_BUTTON, INPUT);
+  if (digitalRead(DEVICE_WAKE_BUTTON) == LOW) {
     deviceLog("Runtime button press detected\n");
     unsigned long start = millis();
-    while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+    while (digitalRead(DEVICE_WAKE_BUTTON) == LOW) {
       unsigned long held = millis() - start;
       if (held >= BUTTON_FACTORY_RESET) {
         deviceLog("Runtime factory reset triggered\n");
@@ -103,16 +102,16 @@ void checkRuntimeReset() {
 //   LONG    (6–7 s)  → WiFi credentials clear
 //   LONGEST (16+ s)  → factory reset / soft reset
 WakePress detectButtonWakePress() {
-  pinMode(M5PAPER_WAKE_BUTTON, INPUT);
+  pinMode(DEVICE_WAKE_BUTTON, INPUT);
 
   // Button already released before firmware started → was a short click
-  if (digitalRead(M5PAPER_WAKE_BUTTON) == HIGH) {
+  if (digitalRead(DEVICE_WAKE_BUTTON) == HIGH) {
     return WakePress::CLICK;
   }
 
   // Button still held — measure how long it stays LOW
   unsigned long start = millis();
-  while (digitalRead(M5PAPER_WAKE_BUTTON) == LOW) {
+  while (digitalRead(DEVICE_WAKE_BUTTON) == LOW) {
     if (millis() - start >= (unsigned long)BUTTON_FACTORY_RESET) break;
     delay(10);
   }

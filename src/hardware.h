@@ -6,11 +6,19 @@
 
 static constexpr const char* DEVICE_MODEL_STR = DEVICE_MODEL;
 
+#ifdef TRMNL_PAPERDIY
+static constexpr const char* DEVICE_DISPLAY_NAME = "PaperDIY";
+static constexpr const char* DEVICE_SETUP_SSID = "PaperDIY-TRMNL";
+static constexpr int DEVICE_WAKE_BUTTON = 4;
+#else
+static constexpr const char* DEVICE_DISPLAY_NAME = "M5Paper";
+static constexpr const char* DEVICE_SETUP_SSID = "M5Paper-TRMNL";
+static constexpr int DEVICE_WAKE_BUTTON = 39;
+static constexpr int M5EPD_MAIN_PWR_PIN = 2;
+#endif
+
 static constexpr int DISPLAY_WIDTH = 960;
 static constexpr int DISPLAY_HEIGHT = 540;
-
-static constexpr int M5PAPER_WAKE_BUTTON = 39;
-static constexpr int M5EPD_MAIN_PWR_PIN = 2;
 
 static constexpr int DEFAULT_REFRESH_RATE = 900;
 static constexpr int MIN_REFRESH_RATE = 15;

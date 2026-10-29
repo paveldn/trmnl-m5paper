@@ -84,6 +84,8 @@ jobs:
           mkdir -p dist
           cp .pio/build/m5stack_paper/firmware.bin dist/m5paper.bin
           cp .pio/build/m5stack_paper/firmware.factory.bin dist/m5paper.factory.bin
+          cp .pio/build/paperdiy/firmware.bin dist/paperdiy.bin
+          cp .pio/build/paperdiy/firmware.factory.bin dist/paperdiy.factory.bin
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -94,6 +96,8 @@ jobs:
           files: |
             dist/m5paper.bin
             dist/m5paper.factory.bin
+            dist/paperdiy.bin
+            dist/paperdiy.factory.bin
 
   deploy-flasher:
     needs: release

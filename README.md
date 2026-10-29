@@ -1,6 +1,6 @@
-# M5Paper TRMNL Firmware
+# M5Paper / PaperDIY TRMNL Firmware
 
-Custom firmware for [M5Paper](https://docs.m5stack.com/en/core/m5paper) that turns it into a [TRMNL](https://usetrmnl.com/) BYOD display.
+Custom firmware for M5Stack M5Paper and PaperDIY that turns either device into a [TRMNL](https://usetrmnl.com/) BYOD display.
 
 ## Features
 
@@ -20,34 +20,33 @@ Custom firmware for [M5Paper](https://docs.m5stack.com/en/core/m5paper) that tur
 ## Hardware
 
 - [M5Paper](https://docs.m5stack.com/en/core/m5paper) — ESP32-D0WDQ5, 4.7" e-paper 960×540
-- Power architecture: GPIO2 drives SY7088 boost converter (no PMIC)
-- Wake sources: RTC timer, button (GPIO39)
+- [PaperDIY Complete Kit](https://docs.m5stack.com/en/core/PaperDIY_Complete_Kit) — ESP32-S3R8, 4.7" e-paper 960×540
+- M5Paper sleep: ESP32 timer/button wake with the GPIO2 power rail held
+- PaperDIY sleep: M5PM1 timed power-off; the power button wakes it manually
 
 ## Building
 
 Requires [PlatformIO](https://platformio.org/).
 
 ```bash
-pio run              # build
-pio run -t upload    # flash via USB
+pio run                              # build both targets
+pio run -e m5stack_paper -t upload  # flash M5Paper
+pio run -e paperdiy -t upload       # flash PaperDIY
 ```
 
 ## Flash From Your Browser
 
-Use the [M5Paper web installer](https://paveldn.github.io/trmnl-m5paper/) to
+Use the [web installer](https://paveldn.github.io/trmnl-m5paper/) to
 flash the complete firmware from desktop Chrome or Edge:
 
-1. Connect the M5Paper with a data-capable USB-C cable and power it on.
-2. Verify that it is an M5Paper or M5Paper v1.1 (SKU K049 or K049-B) with the
-   original ESP32 chip.
+1. Connect the device with a data-capable USB-C cable and power it on.
+2. Select M5Paper K049/K049-B or PaperDIY Complete Kit K159-B.
 3. Click **Connect & install**, then select its serial port.
 4. Keep the cable connected until flashing completes.
 5. Join the `TRMNL-XXXX` WiFi network and complete the setup page.
 
-PaperS3, M5Paper Color, and CoreInk are not supported. ESP Web Tools checks the
-chip family before flashing and will reject ESP32-S3 successors automatically.
-It cannot reliably distinguish the M5Paper from every other board using the
-original ESP32 chip, so verify the model label before continuing.
+PaperS3, M5Paper Color, and CoreInk are not supported. The two supported devices
+use different chip families, so select the exact model before flashing.
 
 The version shown on the installer page is loaded at runtime from the same
 generated manifest used for flashing. The manifest version is derived from
@@ -110,6 +109,7 @@ The firmware supports two OTA trigger paths:
 
 Default asset naming:
 - `OTA_FIRMWARE_ASSET_NAME` defaults to `m5paper.bin` (derived from `DEVICE_MODEL ".bin"`).
+- PaperDIY builds use `paperdiy.bin`.
 - This prevents wrong-device updates when multiple firmware assets are published in one release.
 
 Safety rules:

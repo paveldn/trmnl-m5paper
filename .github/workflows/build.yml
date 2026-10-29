@@ -39,3 +39,5 @@ jobs:
           path: |
             .pio/build/m5stack_paper/firmware.bin
             .pio/build/m5stack_paper/firmware.factory.bin
+            .pio/build/paperdiy/firmware.bin
+            .pio/build/paperdiy/firmware.factory.bin
