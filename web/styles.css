@@ -229,6 +229,57 @@ h1 {
   color: var(--muted);
 }
 
+.release-picker {
+  display: grid;
+  gap: 8px;
+  margin: 24px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.release-picker > label:first-child {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.release-picker select {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.beta-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.beta-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--ink);
+}
+
+.release-picker p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.release-picker:disabled {
+  opacity: 0.6;
+}
+
 esp-web-install-button {
   display: block;
   margin-top: 24px;
@@ -285,6 +336,8 @@ esp-web-install-button {
 }
 
 .install-button:focus-visible,
+.release-picker select:focus-visible,
+.beta-toggle input:focus-visible,
 a:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 4px;

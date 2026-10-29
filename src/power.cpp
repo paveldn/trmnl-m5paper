@@ -8,10 +8,8 @@
 #include <algorithm>
 #include <cmath>
 
-static const int M5PAPER_WAKE_BUTTON = 39;
-static const int M5EPD_MAIN_PWR_PIN = 2;
-static const int DISPLAY_WIDTH = 960;
-static const int DISPLAY_HEIGHT = 540;
+#include "hardware.h"
+
 static const float LOW_BATTERY_VOLTAGE = 3.4f;
 static const int LOW_BATTERY_USB_RECHECK_SECONDS = 3600;
 

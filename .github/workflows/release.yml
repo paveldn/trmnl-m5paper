@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: v${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,3 +94,13 @@ jobs:
           files: |
             dist/m5paper.bin
             dist/m5paper.factory.bin
+
+  deploy-flasher:
+    needs: release
+    uses: ./.github/workflows/pages.yml
+    with:
+      release_tag: ${{ needs.release.outputs.tag }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

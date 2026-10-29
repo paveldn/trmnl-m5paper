@@ -78,6 +78,16 @@
             </div>
           </div>
 
+          <fieldset class="release-picker" disabled>
+            <label for="firmware-release">Firmware version</label>
+            <select id="firmware-release" aria-describedby="release-help"></select>
+            <label class="beta-toggle" for="include-beta">
+              <input id="include-beta" type="checkbox" />
+              Include beta releases
+            </label>
+            <p id="release-help">Stable releases are shown by default.</p>
+          </fieldset>
+
           <div id="model-compatibility" class="model-warning" role="note">
             <strong>Check your model before installing</strong>
             <p>

@@ -8,6 +8,7 @@
 #include <cmath>
 
 #include "api_helpers.h"
+#include "hardware.h"
 #include "image_pipeline.h"
 #include "ota.h"
 #include "power.h"
@@ -21,11 +22,6 @@
 static const int SLEEP_NOT_CONNECTED = 5;
 static const float LOW_BATTERY_VOLTAGE = 3.4f;
 static const uint32_t OTA_SAFETY_INTERVAL_SEC = 86400UL;
-static const char* DEVICE_MODEL = "m5paper";
-static const int DISPLAY_WIDTH = 960;
-static const int DISPLAY_HEIGHT = 540;
-static const int MIN_REFRESH_RATE = 15;
-static const int MAX_REFRESH_RATE = 86400;
 
 extern Preferences prefs;
 extern String apiKey;
@@ -187,7 +183,7 @@ void registerDevice() {
   http.begin(url);
   http.setTimeout(15000);
   http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-  addSetupHeaders(http, WiFi.macAddress(), FW_VERSION_STR, DEVICE_MODEL);
+  addSetupHeaders(http, WiFi.macAddress(), FW_VERSION_STR, DEVICE_MODEL_STR);
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
@@ -284,7 +280,7 @@ void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
                     imageCached,
                     lastWakeTime,
                     FW_VERSION_STR,
-                    DEVICE_MODEL,
+                    DEVICE_MODEL_STR,
                     getWifiBand(),
                     isBatteryCharging(),
                     isExternalPowerPresent(),
@@ -402,10 +398,19 @@ void fetchAndDisplay(float batteryVoltage, bool specialFunctionActive) {
     deviceLog("OTA: skipped check due to low battery %.2fV < %.2fV\n", batteryVoltage, (double)OTA_MIN_BATTERY_VOLTAGE);
   }
 
-  // Update refresh rate from server
-  if (newRefreshRate != refreshRate) {
-    deviceLog("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
-    saveRefreshRate(newRefreshRate);
+  // Special-function responses and malformed server data can contain a
+  // transient zero/short interval. Do not persist it as the normal schedule.
+  if (newRefreshRate >= MIN_NORMAL_REFRESH_RATE) {
+    if (newRefreshRate != refreshRate) {
+      deviceLog("Refresh rate: %d -> %d\n", refreshRate, newRefreshRate);
+      saveRefreshRate(newRefreshRate);
+    }
+  } else if (refreshRate < MIN_NORMAL_REFRESH_RATE) {
+    deviceLog("Invalid refresh rate %d; restoring %d\n",
+              requestedRefreshRate, DEFAULT_REFRESH_RATE);
+    saveRefreshRate(DEFAULT_REFRESH_RATE);
+  } else {
+    deviceLog("Ignoring transient refresh rate %d\n", requestedRefreshRate);
   }
 
   // ── OTA firmware update ──

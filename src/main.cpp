@@ -36,6 +36,7 @@
 #include "api_client.h"
 #include "button.h"
 #include "display.h"
+#include "hardware.h"
 #include "image_pipeline.h"
 #include "ota.h"
 #include "preferences_persistence.h"
@@ -44,17 +45,12 @@
 #include "wifi_network.h"
 
 // ─────────────────────────── Hardware Defines ───────────────────────────
-#define M5PAPER_WAKE_BUTTON     39   // GPIO39 - physical button
-#define M5EPD_MAIN_PWR_PIN       2   // GPIO2 - SY7088 enable (main 3.3V rail)
 #ifndef FW_VERSION
 #error "FW_VERSION must be defined by build system (platformio.ini custom_app_version)"
 #endif
-#define DISPLAY_WIDTH       960
-#define DISPLAY_HEIGHT      540
 
 // ─────────────────────────── Configuration ───────────────────────────
 #define DEFAULT_API_BASE_URL   "https://trmnl.app"
-#define DEFAULT_REFRESH_RATE   900   // 15 minutes (in seconds)
 #define WIFI_AP_TIMEOUT        300   // 5 minutes in AP mode before sleep
 #define LOG_BUFFER_SIZE        4096  // Max log buffer to send to server
 

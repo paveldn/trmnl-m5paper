@@ -2,8 +2,7 @@
 
 #include <M5Unified.h>
 
-static const int DISPLAY_WIDTH = 960;
-static const int DISPLAY_HEIGHT = 540;
+#include "hardware.h"
 
 extern M5Canvas canvas;
 extern const char* FW_VERSION_STR;

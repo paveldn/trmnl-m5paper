@@ -4,9 +4,9 @@
 #include <M5Unified.h>
 #include <Preferences.h>
 
+#include "hardware.h"
 #include "trmnl_keys.h"
 
-static const int M5PAPER_WAKE_BUTTON = 39;
 static const int BUTTON_MEDIUM_TIME    = 1000;  // 1s  — medium press (special function)
 static const int BUTTON_HOLD_TIME      = 6000;  // 6s  — long press (WiFi clear)
 static const int BUTTON_FACTORY_RESET  = 16000; // 16s — longest press (factory reset / soft reset)

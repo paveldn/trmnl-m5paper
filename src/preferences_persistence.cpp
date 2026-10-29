@@ -3,12 +3,10 @@
 #include <Preferences.h>
 #include <algorithm>
 
+#include "hardware.h"
 #include "trmnl_keys.h"
 
 static const char* DEFAULT_API_BASE_URL = "https://trmnl.app";
-static const int DEFAULT_REFRESH_RATE = 900;
-static const int MIN_REFRESH_RATE = 15;
-static const int MAX_REFRESH_RATE = 86400;
 
 extern Preferences prefs;
 extern String configuredSSID;

@@ -3,7 +3,16 @@ name: Browser Flasher
 on:
   push:
     branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_tag:
+        description: Release tag whose factory image should be deployed
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -18,30 +27,62 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/pip
-            ~/.platformio
-          key: pio-${{ hashFiles('platformio.ini') }}
+      - name: Download Released Firmware Catalog
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/releases
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            > dist/releases-api.json
+          jq -r '.[][] | select(.draft == false) |
+            .tag_name as $tag |
+            .assets[]? |
+            select(.name == "m5paper.factory.bin") |
+            [$tag, (.id | tostring)] | @tsv' dist/releases-api.json |
+          while IFS=$'\t' read -r tag asset_id; do
+            if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Skipping unsupported release tag: $tag"
+              continue
+            fi
+            mkdir -p "dist/releases/$tag"
+            gh api -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+              > "dist/releases/$tag/m5paper.factory.bin"
+          done
+          requested_tag="${INPUT_TAG:-${EVENT_TAG:-}}"
+          if [[ -n "$requested_tag" ]]; then
+            if [[ ! "$requested_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid requested release tag: $requested_tag" >&2
+              exit 1
+            fi
+            if [[ ! -f "dist/releases/$requested_tag/m5paper.factory.bin" ]]; then
+              echo "Requested release has no m5paper.factory.bin asset: $requested_tag" >&2
+              exit 1
+            fi
+          fi
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - name: Install PlatformIO
-        run: pip install platformio
-
-      - name: Build Firmware
-        run: pio run
-
       - name: Prepare Browser Installer
-        run: python scripts/prepare_web_installer.py
+        run: >-
+          python scripts/prepare_web_installer.py
+          --releases-json dist/releases-api.json
+          --firmware-dir dist/releases
 
       - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
+        with:
+          token: ${{ secrets.PAGES_TOKEN || github.token }}
+          enablement: ${{ secrets.PAGES_TOKEN != '' }}
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v4
@@ -60,4 +101,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
