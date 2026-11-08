@@ -52,7 +52,9 @@ jobs:
               continue
             fi
             mkdir -p "dist/releases/$tag"
-            gh api -H "Accept: application/octet-stream" \
+            # Firmware is written directly to disk, so preserve all binary bytes.
+            gh api --allow-escape-sequences \
+              -H "Accept: application/octet-stream" \
               "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
               > "dist/releases/$tag/$asset_name"
           done
